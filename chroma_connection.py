@@ -13,7 +13,7 @@ _collection: Collection | None = None
 
 # Embeddings: mismo modelo que usabas en local
 _embedder = embedding_functions.SentenceTransformerEmbeddingFunction(
-    model_name="all-MiniLM-L6-v2"
+    model_name="text-embedding-3-large"
 )
 
 def get_chroma_client() -> ClientAPI:
