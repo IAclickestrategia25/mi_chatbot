@@ -1,0 +1,757 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <title>Asistente sobre tus documentos</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root {
+      --bg-page: #f4f5fb;
+      --bg-card: #ffffff;
+      --border-subtle: #e1e4ee;
+      --primary: #2563eb;
+      --primary-dark: #1d4ed8;
+      --text-main: #1f2933;
+      --text-muted: #6b7280;
+      --radius-lg: 10px;
+      --shadow-soft: 0 8px 20px rgba(15, 23, 42, 0.06);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--text-main);
+      background: radial-gradient(circle at top left, #e0e7ff 0, #f4f5fb 40%, #f4f5fb 100%);
+      padding: 24px 16px;
+      display: flex;
+      justify-content: center;
+    }
+
+    .page {
+      width: 100%;
+      max-width: 1180px;
+    }
+
+    header {
+      margin-bottom: 20px;
+    }
+
+    .title {
+      font-size: 26px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      margin: 0 0 4px;
+      text-align: left;
+      color: #111827;
+    }
+
+    .subtitle {
+      margin: 0;
+      font-size: 14px;
+      color: var(--text-muted);
+      max-width: 640px;
+    }
+
+    .layout {
+      display: grid;
+      gap: 16px;
+    }
+
+    @media (min-width: 960px) {
+      .layout {
+        grid-template-columns: minmax(0, 0.55fr) minmax(0, 0.45fr);
+        align-items: stretch;
+      }
+    }
+
+    /* Tarjeta genérica */
+    .card {
+      background: var(--bg-card);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-soft);
+      border: 1px solid rgba(148, 163, 184, 0.25);
+    }
+
+    /* COLUMNA IZQUIERDA: Índice + Uploader */
+    .left-column {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    /* Panel índice conocimiento */
+    #index-panel {
+      padding: 14px 16px 14px;
+    }
+
+    #index-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 6px;
+    }
+
+    #index-title {
+      font-size: 15px;
+      font-weight: 600;
+      margin: 0;
+    }
+
+    #index-refresh {
+      border: none;
+      background: transparent;
+      font-size: 12px;
+      color: var(--primary);
+      cursor: pointer;
+      padding: 4px 8px;
+      border-radius: 999px;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    #index-refresh:hover {
+      background: #e0ebff;
+    }
+
+    #filesList {
+      list-style: none;
+      padding: 0;
+      margin: 8px 0 6px;
+      max-height: 220px;
+      overflow-y: auto;
+      font-size: 13px;
+    }
+
+    .file-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 6px 0;
+      border-bottom: 1px dashed rgba(226, 232, 240, 0.8);
+    }
+
+    .file-main {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .file-name {
+      font-weight: 500;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .file-meta {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .file-actions {
+      display: inline-flex;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+
+    .file-actions button {
+      padding: 4px 8px;
+      font-size: 11px;
+      border-radius: 999px;
+      border: 1px solid #d1d5db;
+      background: #f9fafb;
+      color: #374151;
+      box-shadow: none;
+      font-weight: 500;
+    }
+
+    .file-actions button:hover:not(:disabled) {
+      background: #e5e7eb;
+      transform: none;
+      box-shadow: none;
+    }
+
+    .file-actions button.delete {
+      border-color: #fecaca;
+      color: #b91c1c;
+      background: #fef2f2;
+    }
+
+    .file-actions button.delete:hover:not(:disabled) {
+      background: #fee2e2;
+    }
+
+    #fileDetails {
+      margin-top: 4px;
+      padding-top: 6px;
+      border-top: 1px dashed var(--border-subtle);
+      font-size: 12px;
+      color: var(--text-muted);
+      max-height: 160px;
+      overflow-y: auto;
+    }
+
+    #fileDetails h3 {
+      font-size: 12px;
+      margin: 0 0 4px;
+      font-weight: 600;
+      color: #111827;
+    }
+
+    .fragment-block {
+      margin-bottom: 6px;
+      padding: 4px 6px;
+      border-radius: 6px;
+      background: #f9fafb;
+      border: 1px solid rgba(229, 231, 235, 0.7);
+      white-space: pre-wrap;
+    }
+
+    #index-empty {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin: 6px 0 0;
+    }
+
+    /* Uploader */
+    #uploader {
+      padding: 12px 16px 14px;
+    }
+
+    #uploader-title {
+      font-size: 15px;
+      font-weight: 600;
+      margin: 0 0 4px;
+    }
+
+    #uploader p {
+      margin: 0 0 8px;
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    #uploader-controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 10px;
+      align-items: center;
+      padding-top: 6px;
+      border-top: 1px dashed var(--border-subtle);
+    }
+
+    #fileInput {
+      max-width: 320px;
+      font-size: 13px;
+    }
+
+    #uploadStatus {
+      font-size: 12px;
+      color: var(--text-muted);
+      min-height: 18px;
+    }
+
+    progress {
+      width: 160px;
+      height: 10px;
+      appearance: none;
+    }
+
+    progress::-webkit-progress-bar {
+      background-color: #e5e7eb;
+      border-radius: 999px;
+    }
+
+    progress::-webkit-progress-value {
+      background-color: var(--primary);
+      border-radius: 999px;
+    }
+
+    progress::-moz-progress-bar {
+      background-color: var(--primary);
+      border-radius: 999px;
+    }
+
+    /* Chat */
+    #chat {
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      height: 70vh;
+      min-height: 440px;
+    }
+
+    #messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px 4px 8px 0;
+      margin-bottom: 10px;
+      font-size: 14px;
+    }
+
+    .msg {
+      max-width: 88%;
+      margin-bottom: 10px;
+      line-height: 1.45;
+      padding: 8px 10px;
+      border-radius: 10px;
+      position: relative;
+      word-wrap: break-word;
+    }
+
+    .msg.user {
+      margin-left: auto;
+      background: #e0ebff;
+      color: #111827;
+      border-bottom-right-radius: 2px;
+    }
+
+    .msg.bot {
+      margin-right: auto;
+      background: #f9fafb;
+      border: 1px solid var(--border-subtle);
+      border-bottom-left-radius: 2px;
+    }
+
+    .msg small {
+      display: block;
+      margin-top: 4px;
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    form {
+      display: flex;
+      gap: 8px;
+      padding-top: 8px;
+      border-top: 1px solid var(--border-subtle);
+    }
+
+    input[type="text"] {
+      flex: 1;
+      padding: 10px 12px;
+      border-radius: 999px;
+      border: 1px solid #cbd5e1;
+      font-size: 14px;
+      outline: none;
+      transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
+      background-color: #f9fafb;
+    }
+
+    input[type="text"]:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.18);
+      background-color: #ffffff;
+    }
+
+    button {
+      padding: 10px 18px;
+      border-radius: 999px;
+      border: none;
+      background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+      color: #fff;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 6px 16px rgba(37, 99, 235, 0.35);
+      transition: background 0.12s ease, transform 0.1s ease, box-shadow 0.12s ease;
+    }
+
+    button:hover:not(:disabled) {
+      transform: translateY(-1px);
+      box-shadow: 0 8px 18px rgba(37, 99, 235, 0.4);
+    }
+
+    button:active:not(:disabled) {
+      transform: translateY(0);
+      box-shadow: 0 4px 10px rgba(37, 99, 235, 0.3);
+    }
+
+    button:disabled {
+      opacity: 0.65;
+      cursor: wait;
+      box-shadow: none;
+    }
+
+    @media (max-width: 960px) {
+      .layout {
+        grid-template-columns: minmax(0, 1fr);
+      }
+
+      #chat {
+        height: 65vh;
+      }
+
+      .msg {
+        max-width: 100%;
+      }
+
+      #uploader-controls {
+        align-items: flex-start;
+      }
+    }
+
+    @media (max-width: 640px) {
+      body {
+        padding: 16px 10px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header>
+      <h1 class="title">Asistente personal</h1>
+      <p class="subtitle">
+        Sube documentos y consulta su contenido de forma conversacional. El índice de conocimiento te permite ver qué archivos están cargados,
+        revisar fragmentos y eliminarlos cuando lo desees.
+      </p>
+    </header>
+
+    <div class="layout">
+      <!-- COLUMNA IZQUIERDA: Índice + Uploader -->
+      <div class="left-column">
+        <!-- PANEL ÍNDICE -->
+        <section id="index-panel" class="card">
+          <div id="index-header">
+            <h2 id="index-title">Índice de conocimiento</h2>
+            <button id="index-refresh" type="button">Actualizar</button>
+          </div>
+          <ul id="filesList"></ul>
+          <div id="index-empty" style="display:none;">
+            No hay documentos indexados todavía. Sube uno para empezar.
+          </div>
+
+          <div id="fileDetails"></div>
+        </section>
+
+        <!-- BLOQUE DE SUBIDA DE DOCUMENTOS -->
+        <section id="uploader" class="card">
+          <h2 id="uploader-title">Subir documentos</h2>
+          <p>
+            Puedes incorporar PDF, archivos DOCX, CSV e imágenes (PNG/JPG). El contenido se procesa e indexa en Chroma para que
+            el asistente pueda utilizarlo como base de sus respuestas.
+          </p>
+          <div id="uploader-controls">
+            <input id="fileInput" type="file" multiple
+                   accept=".pdf,.docx,.csv,.png,.jpg,.jpeg" />
+            <button id="uploadBtn" type="button">Subir</button>
+            <progress id="uploadProgress" value="0" max="100" hidden></progress>
+            <span id="uploadStatus"></span>
+          </div>
+        </section>
+      </div>
+
+      <!-- CHAT -->
+      <section id="chat" class="card">
+        <div id="messages"></div>
+        <form id="form">
+          <input id="input" type="text" placeholder="Escribe tu pregunta relacionada con los documentos..." autocomplete="off" />
+          <button type="submit">Enviar</button>
+        </form>
+      </section>
+    </div>
+  </div>
+
+  <script>
+    const ASK_URL = "http://127.0.0.1:8000/api/ask/";
+    const UPLOAD_URL = "http://127.0.0.1:8000/api/upload-files/";
+    const INDEX_URL = "http://127.0.0.1:8000/api/index-summary/";
+    const FRAGMENTS_URL = "http://127.0.0.1:8000/api/file-fragments/";
+    const DELETE_URL = "http://127.0.0.1:8000/api/delete-by-filename/";
+
+    // Elementos del chat
+    const form = document.getElementById("form");
+    const input = document.getElementById("input");
+    const messages = document.getElementById("messages");
+    const sendButton = form.querySelector("button");
+
+    // Elementos del uploader
+    const fileInput = document.getElementById("fileInput");
+    const uploadBtn = document.getElementById("uploadBtn");
+    const uploadStatus = document.getElementById("uploadStatus");
+    const uploadProgress = document.getElementById("uploadProgress");
+
+    // Índice de conocimiento
+    const filesList = document.getElementById("filesList");
+    const fileDetails = document.getElementById("fileDetails");
+    const indexEmpty = document.getElementById("index-empty");
+    const indexRefreshBtn = document.getElementById("index-refresh");
+
+    function addMessage(text, who = "bot") {
+      const div = document.createElement("div");
+      div.className = "msg " + who;
+      div.innerHTML = text.replace(/\n/g, "<br>");
+      messages.appendChild(div);
+      messages.scrollTop = messages.scrollHeight;
+    }
+
+    // ---------------------------
+    // CARGAR ÍNDICE DE CONOCIMIENTO
+    // ---------------------------
+    async function loadIndex() {
+      filesList.innerHTML = "";
+      fileDetails.innerHTML = "";
+      indexEmpty.style.display = "none";
+
+      try {
+        const res = await fetch(INDEX_URL);
+        if (!res.ok) {
+          indexEmpty.textContent = "Error al cargar el índice (" + res.status + ").";
+          indexEmpty.style.display = "block";
+          return;
+        }
+        const data = await res.json();
+        const archivos = data.archivos || [];
+
+        if (archivos.length === 0) {
+          indexEmpty.textContent = "No hay documentos indexados todavía. Sube uno para empezar.";
+          indexEmpty.style.display = "block";
+          return;
+        }
+
+        archivos.forEach((item) => {
+          const li = document.createElement("li");
+          li.className = "file-row";
+          li.dataset.filename = item.filename;
+
+          const main = document.createElement("div");
+          main.className = "file-main";
+          const name = document.createElement("div");
+          name.className = "file-name";
+          name.textContent = item.filename;
+          const meta = document.createElement("div");
+          meta.className = "file-meta";
+          meta.textContent = `${item.total_fragmentos} fragmento(s) indexados`;
+
+          main.appendChild(name);
+          main.appendChild(meta);
+
+          const actions = document.createElement("div");
+          actions.className = "file-actions";
+
+          const viewBtn = document.createElement("button");
+          viewBtn.type = "button";
+          viewBtn.textContent = "Ver detalles";
+          viewBtn.addEventListener("click", () => showFileDetails(item.filename));
+
+          const deleteBtn = document.createElement("button");
+          deleteBtn.type = "button";
+          deleteBtn.textContent = "Eliminar";
+          deleteBtn.classList.add("delete");
+          deleteBtn.addEventListener("click", () => deleteFile(item.filename));
+
+          actions.appendChild(viewBtn);
+          actions.appendChild(deleteBtn);
+
+          li.appendChild(main);
+          li.appendChild(actions);
+          filesList.appendChild(li);
+        });
+      } catch (err) {
+        console.error(err);
+        indexEmpty.textContent = "Error de conexión al cargar el índice.";
+        indexEmpty.style.display = "block";
+      }
+    }
+
+    async function showFileDetails(filename) {
+      fileDetails.innerHTML = "";
+      const title = document.createElement("h3");
+      title.textContent = "Fragmentos de ejemplo de: " + filename;
+      fileDetails.appendChild(title);
+
+      try {
+        const res = await fetch(
+          FRAGMENTS_URL +
+          "?filename=" + encodeURIComponent(filename) +
+          "&limit=3"
+        );
+        if (!res.ok) {
+          const p = document.createElement("p");
+          p.textContent = "No se pudieron recuperar los fragmentos (" + res.status + ").";
+          fileDetails.appendChild(p);
+          return;
+        }
+        const data = await res.json();
+        const docs = data.documentos || [];
+
+        if (docs.length === 0) {
+          const p = document.createElement("p");
+          p.textContent = "No se han encontrado fragmentos para este archivo.";
+          fileDetails.appendChild(p);
+          return;
+        }
+
+        docs.forEach((frag, idx) => {
+          const block = document.createElement("div");
+          block.className = "fragment-block";
+          block.textContent = (idx + 1) + ". " + frag;
+          fileDetails.appendChild(block);
+        });
+      } catch (err) {
+        console.error(err);
+        const p = document.createElement("p");
+        p.textContent = "Error de conexión al cargar detalles.";
+        fileDetails.appendChild(p);
+      }
+    }
+
+    async function deleteFile(filename) {
+      const ok = window.confirm(
+        `¿Seguro que quieres eliminar todos los fragmentos asociados a "${filename}" del índice?`
+      );
+      if (!ok) return;
+
+      try {
+        const res = await fetch(
+          DELETE_URL + "?filename=" + encodeURIComponent(filename),
+          { method: "DELETE" }
+        );
+        if (!res.ok) {
+          alert("Error al eliminar (" + res.status + ").");
+          return;
+        }
+        await loadIndex();
+      } catch (err) {
+        console.error(err);
+        alert("Error de conexión al eliminar el archivo del índice.");
+      }
+    }
+
+    indexRefreshBtn.addEventListener("click", loadIndex);
+
+    // ---------------------------
+    // Envío de preguntas al /api/ask
+    // ---------------------------
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const question = input.value.trim();
+      if (!question) return;
+
+      addMessage(question, "user");
+      input.value = "";
+      input.focus();
+      sendButton.disabled = true;
+
+      try {
+        const body = {
+          question: question,
+          n_results: 15,
+          distance_threshold: 1.2
+        };
+
+        const res = await fetch(ASK_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body)
+        });
+
+        if (!res.ok) {
+          addMessage("Se ha producido un error al consultar la API (" + res.status + ").", "bot");
+        } else {
+          const data = await res.json();
+          addMessage(data.respuesta || "No se ha recibido contenido de respuesta.", "bot");
+        }
+      } catch (err) {
+        console.error(err);
+        addMessage("Error de conexión con el servidor. Comprueba que la API está en ejecución.", "bot");
+      } finally {
+        sendButton.disabled = false;
+      }
+    });
+
+    // ---------------------------
+    // Subida de ficheros con barra de progreso
+    // ---------------------------
+    uploadBtn.addEventListener("click", async () => {
+      const files = fileInput.files;
+      if (!files || files.length === 0) {
+        uploadStatus.textContent = "Selecciona al menos un archivo para comenzar.";
+        return;
+      }
+
+      const formData = new FormData();
+      for (const f of files) {
+        formData.append("files", f); // nombre 'files' coincide con el endpoint
+      }
+
+      uploadBtn.disabled = true;
+      uploadStatus.textContent = "Procesando documentos…";
+      uploadProgress.hidden = false;
+      uploadProgress.value = 0;
+
+      try {
+        const response = await uploadWithProgress(formData);
+        if (response.status >= 200 && response.status < 300) {
+          let data;
+          try {
+            data = JSON.parse(response.body);
+          } catch {
+            data = {};
+          }
+          const frag = data.total_fragmentos ?? "?";
+          uploadStatus.textContent =
+            "Subida completada. Fragmentos indexados: " + frag + ". Ya puedes realizar consultas.";
+          fileInput.value = "";
+          // Refrescar índice tras subir
+          await loadIndex();
+        } else {
+          uploadStatus.textContent = "Error al subir los documentos (" + response.status + ").";
+        }
+      } catch (err) {
+        console.error(err);
+        uploadStatus.textContent = "Error de conexión durante la subida.";
+      } finally {
+        uploadBtn.disabled = false;
+        setTimeout(() => {
+          uploadProgress.hidden = true;
+        }, 900);
+      }
+    });
+
+    // Función auxiliar para tener progreso con XMLHttpRequest
+    function uploadWithProgress(formData) {
+      return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", UPLOAD_URL);
+
+        xhr.upload.onprogress = (event) => {
+          if (event.lengthComputable) {
+            const percent = Math.round((event.loaded / event.total) * 100);
+            uploadProgress.value = percent;
+          }
+        };
+
+        xhr.onload = () => {
+          resolve({ status: xhr.status, body: xhr.responseText });
+        };
+
+        xhr.onerror = () => {
+          reject(new Error("Network error"));
+        };
+
+        xhr.send(formData);
+      });
+    }
+
+    // Mensaje inicial + carga inicial del índice
+    addMessage(
+      "Hola, soy el asistente. Sube tus documentos y, a continuación, pregúntame sobre su contenido. " +
+      "Las respuestas se basarán exclusivamente en la información que encuentre en ellos.",
+      "bot"
+    );
+    loadIndex();
+  </script>
+</body>
+</html>
