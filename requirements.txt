@@ -7,3 +7,4 @@ pymupdf
 python-docx
 pydantic
 requests
+sentence-transformers
