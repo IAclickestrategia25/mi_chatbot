@@ -69,7 +69,6 @@
       }
     }
 
-    /* Tarjeta genérica */
     .card {
       background: var(--bg-card);
       border-radius: var(--radius-lg);
@@ -77,14 +76,12 @@
       border: 1px solid rgba(148, 163, 184, 0.25);
     }
 
-    /* COLUMNA IZQUIERDA: Índice + Uploader */
     .left-column {
       display: flex;
       flex-direction: column;
       gap: 12px;
     }
 
-    /* Panel índice conocimiento */
     #index-panel {
       padding: 14px 16px 14px;
     }
@@ -220,7 +217,6 @@
       margin: 6px 0 0;
     }
 
-    /* Uploader */
     #uploader {
       padding: 12px 16px 14px;
     }
@@ -278,7 +274,6 @@
       border-radius: 999px;
     }
 
-    /* Chat */
     #chat {
       padding: 16px;
       display: flex;
@@ -419,9 +414,7 @@
     </header>
 
     <div class="layout">
-      <!-- COLUMNA IZQUIERDA: Índice + Uploader -->
       <div class="left-column">
-        <!-- PANEL ÍNDICE -->
         <section id="index-panel" class="card">
           <div id="index-header">
             <h2 id="index-title">Índice de conocimiento</h2>
@@ -435,7 +428,6 @@
           <div id="fileDetails"></div>
         </section>
 
-        <!-- BLOQUE DE SUBIDA DE DOCUMENTOS -->
         <section id="uploader" class="card">
           <h2 id="uploader-title">Subir documentos</h2>
           <p>
@@ -452,7 +444,6 @@
         </section>
       </div>
 
-      <!-- CHAT -->
       <section id="chat" class="card">
         <div id="messages"></div>
         <form id="form">
@@ -470,6 +461,17 @@
     const FRAGMENTS_URL = "/api/file-fragments/";
     const DELETE_URL = "/api/delete-by-filename/";
 
+    // ---------------------------
+    // GESTIÓN DE CONTRASEÑA DE ADMIN
+    // ---------------------------
+    let adminToken = null;
+
+    function ensureAdminToken() {
+      if (!adminToken) {
+        adminToken = prompt("Introduce la contraseña de administrador para subir o borrar archivos:");
+      }
+      return adminToken;
+    }
 
     // Elementos del chat
     const form = document.getElementById("form");
@@ -614,10 +616,21 @@
       );
       if (!ok) return;
 
+      const token = ensureAdminToken();
+      if (!token) {
+        alert("No se ha introducido la contraseña. Operación cancelada.");
+        return;
+      }
+
       try {
         const res = await fetch(
           DELETE_URL + "?filename=" + encodeURIComponent(filename),
-          { method: "DELETE" }
+          {
+            method: "DELETE",
+            headers: {
+              "X-Admin-Token": token,
+            },
+          }
         );
         if (!res.ok) {
           alert("Error al eliminar (" + res.status + ").");
@@ -673,7 +686,7 @@
     });
 
     // ---------------------------
-    // Subida de ficheros con barra de progreso
+    // Subida de ficheros con barra de progreso (PROTEGIDA)
     // ---------------------------
     uploadBtn.addEventListener("click", async () => {
       const files = fileInput.files;
@@ -682,9 +695,15 @@
         return;
       }
 
+      const token = ensureAdminToken();
+      if (!token) {
+        uploadStatus.textContent = "No se ha introducido la contraseña. Subida cancelada.";
+        return;
+      }
+
       const formData = new FormData();
       for (const f of files) {
-        formData.append("files", f); // nombre 'files' coincide con el endpoint
+        formData.append("files", f);
       }
 
       uploadBtn.disabled = true;
@@ -693,7 +712,7 @@
       uploadProgress.value = 0;
 
       try {
-        const response = await uploadWithProgress(formData);
+        const response = await uploadWithProgress(formData, token);
         if (response.status >= 200 && response.status < 300) {
           let data;
           try {
@@ -705,7 +724,6 @@
           uploadStatus.textContent =
             "Subida completada. Fragmentos indexados: " + frag + ". Ya puedes realizar consultas.";
           fileInput.value = "";
-          // Refrescar índice tras subir
           await loadIndex();
         } else {
           uploadStatus.textContent = "Error al subir los documentos (" + response.status + ").";
@@ -721,11 +739,15 @@
       }
     });
 
-    // Función auxiliar para tener progreso con XMLHttpRequest
-    function uploadWithProgress(formData) {
+    // Subida con progreso y cabecera X-Admin-Token
+    function uploadWithProgress(formData, token) {
       return new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
         xhr.open("POST", UPLOAD_URL);
+
+        if (token) {
+          xhr.setRequestHeader("X-Admin-Token", token);
+        }
 
         xhr.upload.onprogress = (event) => {
           if (event.lengthComputable) {

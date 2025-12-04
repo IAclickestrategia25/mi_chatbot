@@ -3,7 +3,7 @@ import os
 import base64
 import mimetypes
 from io import BytesIO, StringIO
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 import csv
 import fitz          # PyMuPDF para PDF
@@ -17,15 +17,14 @@ from fastapi import (
     Depends,
     UploadFile,
     File,
+    Header,
 )
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import Optional
-from chroma_connection import get_chroma_collection
 from fastapi.responses import FileResponse
 
-
+from pydantic import BaseModel
+from chroma_connection import get_chroma_collection
 
 
 # -------------------------------------------------
@@ -33,6 +32,9 @@ from fastapi.responses import FileResponse
 # -------------------------------------------------
 load_dotenv()
 openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+# Token de administrador para subir/borrar archivos
+ADMIN_TOKEN = os.getenv("ADMIN_TOKEN")
 
 
 # -------------------------------------------------
@@ -48,7 +50,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# (Opcional) servir estáticos si algún día tienes assets separados
+# Servir estáticos si algún día tienes assets separados
 app.mount("/static", StaticFiles(directory="frontend"), name="static")
 
 # Servir el frontend en la raíz "/"
@@ -71,9 +73,11 @@ class AskBody(BaseModel):
     n_results: int = 15
     distance_threshold: float = 1.2
 
+
 class FileIndexItem(BaseModel):
     filename: str
     total_fragmentos: int
+
 
 def seleccionar_fragmentos_relevantes(
     pregunta: str,
@@ -150,6 +154,7 @@ def seleccionar_fragmentos_relevantes(
             indices_unicos.append(i)
     return indices_unicos[:max_frag]
 
+
 # -------------------------------------------------
 # UTILIDADES PARA TROCEAR TEXTO
 # -------------------------------------------------
@@ -197,21 +202,17 @@ def leer_csv_bytes(data: bytes, encoding: str = "utf-8") -> str:
     Convierte un CSV (en bytes) a un texto plano legible,
     línea a línea, para indexarlo en Chroma.
     """
-    # 1) Pasar de bytes -> str
     texto = data.decode(encoding, errors="ignore")
 
-    # 2) Usar StringIO (modo texto) con csv.reader
     f = StringIO(texto)
     reader = csv.reader(f)
 
     filas = []
     for row in reader:
-        # row es una lista de strings: ["Juan", "Pérez", "35", "Bilbao", ...]
         linea = " ; ".join(col.strip() for col in row if col is not None)
         if linea.strip():
             filas.append(linea)
 
-    # Devolvemos un único texto con saltos de línea
     return "\n".join(filas)
 
 
@@ -276,17 +277,26 @@ async def add_documents(
 
 
 # -------------------------------------------------
-# ENDPOINT: SUBIR PDFs, DOCX, PNG, JPG, CSV DESDE EL NAVEGADOR
+# ENDPOINT: SUBIR PDFs, DOCX, PNG, JPG, CSV DESDE EL NAVEGADOR (PROTEGIDO)
 # -------------------------------------------------
 @app.post("/api/upload-files/")
 async def upload_files(
     files: List[UploadFile] = File(...),
+    admin_token: Optional[str] = Header(None, alias="X-Admin-Token"),
     col=Depends(get_chroma_collection),
 ):
     """
     Recibe ficheros (PDF, DOCX, PNG, JPG/JPEG, CSV) desde el navegador,
     extrae el texto o la descripción y los indexa directamente en Chroma.
+    Solo permite la subida si el token de admin es correcto.
     """
+    # Protección por token
+    if ADMIN_TOKEN and admin_token != ADMIN_TOKEN:
+        raise HTTPException(
+            status_code=403,
+            detail="Token de administrador incorrecto para subir archivos.",
+        )
+
     ids: List[str] = []
     docs: List[str] = []
     metadatas: List[Dict[str, Any]] = []
@@ -367,7 +377,8 @@ async def upload_files(
 
 
 # -------------------------------------------------
-# ENDPOINT: HACER PREGUNTAS A TUS DOCUMENTOS
+# ENDPOINT: HACER PREGUNTAS A TUS DOCUMENTOS (ABIERTO)
+# -------------------------------------------------
 @app.post("/api/ask/")
 async def ask_documents(body: AskBody, col=Depends(get_chroma_collection)):
     """
@@ -499,7 +510,6 @@ async def ask_documents(body: AskBody, col=Depends(get_chroma_collection)):
     }
 
 
-
 # -------------------------------------------------
 # NUEVO ENDPOINT: RESUMEN DEL ÍNDICE (archivos + nº fragmentos)
 # -------------------------------------------------
@@ -566,22 +576,30 @@ async def file_fragments(
 
 
 # -------------------------------------------------
-# NUEVO ENDPOINT: ELIMINAR TODOS LOS FRAGMENTOS DE UN ARCHIVO
+# NUEVO ENDPOINT: ELIMINAR TODOS LOS FRAGMENTOS DE UN ARCHIVO (PROTEGIDO)
 # -------------------------------------------------
 @app.delete("/api/delete-by-filename/")
 async def delete_by_filename(
     filename: str,
+    admin_token: Optional[str] = Header(None, alias="X-Admin-Token"),
     col=Depends(get_chroma_collection),
 ):
     """
     Elimina de la colección todos los fragmentos cuyo metadato
     'filename' coincida con el valor indicado.
+    Solo permite eliminar si el token de admin es correcto.
     """
     if not filename:
         raise HTTPException(status_code=400, detail="Debe indicarse un nombre de archivo.")
 
+    # Protección por token
+    if ADMIN_TOKEN and admin_token != ADMIN_TOKEN:
+        raise HTTPException(
+            status_code=403,
+            detail="Token de administrador incorrecto para eliminar archivos.",
+        )
+
     try:
-        # Borrado por filtro de metadatos
         col.delete(where={"filename": filename})
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error eliminando en Chroma: {e}")
