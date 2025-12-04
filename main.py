@@ -47,8 +47,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Sirve el frontend en /chat  (carpeta "frontend" con index.html)
-app.mount("/chat", StaticFiles(directory="frontend", html=True), name="chat")
+
+# Sirve el frontend en la raíz "/"
+app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")
+
 
 
 # -------------------------------------------------
