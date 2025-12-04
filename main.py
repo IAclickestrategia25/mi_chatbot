@@ -23,6 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
 from chroma_connection import get_chroma_collection
+from fastapi.responses import FileResponse
 
 
 
@@ -41,16 +42,19 @@ app = FastAPI(title="ChromaDB FastAPI Integration")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],       # en local está bien
+    allow_origins=["*"],       # en local y en Render está bien
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# (Opcional) servir estáticos si algún día tienes assets separados
+app.mount("/static", StaticFiles(directory="frontend"), name="static")
 
-# Sirve el frontend en la raíz "/"
-app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")
-
+# Servir el frontend en la raíz "/"
+@app.get("/")
+async def serve_frontend():
+    return FileResponse("frontend/index.html")
 
 
 # -------------------------------------------------
