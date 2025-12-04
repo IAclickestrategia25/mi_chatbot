@@ -340,10 +340,16 @@ async def upload_files(
             )
 
     if not ids:
-        raise HTTPException(
-            status_code=400,
-            detail="No se ha podido extraer información útil de los archivos subidos.",
-        )
+        # En lugar de devolver 400, devolvemos éxito pero indicando que no se ha indexado nada
+        return {
+            "message": (
+                "Los archivos se han recibido, pero no se ha podido extraer "
+                "texto útil para indexarlos. Es posible que sean PDFs escaneados "
+                "o imágenes sin texto."
+            ),
+            "total_archivos": len(files),
+            "total_fragmentos": 0,
+        }
 
     try:
         col.add(ids=ids, documents=docs, metadatas=metadatas)
