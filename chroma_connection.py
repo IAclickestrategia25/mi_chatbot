@@ -11,9 +11,10 @@ load_dotenv()
 _client: ClientAPI | None = None
 _collection: Collection | None = None
 
-# Embeddings: mismo modelo que usabas en local
-_embedder = embedding_functions.SentenceTransformerEmbeddingFunction(
-    model_name="text-embedding-3-large"
+# Embeddings con OpenAI (sin sentence-transformers ni torch)
+_embedder = embedding_functions.OpenAIEmbeddingFunction(
+    api_key=os.getenv("OPENAI_API_KEY"),
+    model_name="text-embedding-3-large",  # o "text-embedding-3-small" si prefieres
 )
 
 def get_chroma_client() -> ClientAPI:
