@@ -33,7 +33,8 @@ def get_chroma_collection(
     global _collection
     if _collection is None:
         _collection = client.get_or_create_collection(
-            name="mis_documentos",
+            name="mis_documentos_openai",
             embedding_function=_embedder,
         )
+
     return _collection
