@@ -279,6 +279,7 @@ async def add_documents(
 # -------------------------------------------------
 # ENDPOINT: SUBIR PDFs, DOCX, PNG, JPG, CSV DESDE EL NAVEGADOR (PROTEGIDO)
 # -------------------------------------------------
+
 @app.post("/api/upload-files/")
 async def upload_files(
     files: List[UploadFile] = File(...),
@@ -535,7 +536,7 @@ async def ask_documents(body: AskBody, col=Depends(get_chroma_collection)):
 
     return {
         "respuesta": respuesta,
-        "fuentes": list({meta.get("filename", "desconocido") for _, meta, _ in filtrados}),
+        "fuentes": list({ meta.get("filename", "desconocido") for _, meta, _ in filtrados }),
         "fragmentos_usados": [doc for doc, _, _ in filtrados],
         "distancias": [float(dist) for _, _, dist in filtrados],
     }
@@ -604,6 +605,8 @@ async def file_fragments(
         "filename": filename,
         "documentos": docs or [],
     }
+
+
 
 
 # -------------------------------------------------

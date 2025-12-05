@@ -485,36 +485,6 @@
       font-size: 13px;
     }
 
-    /* ---------- MODAL RESUMEN ---------- */
-    #summaryModalOverlay {
-      position: fixed;
-      inset: 0;
-      background: rgba(15, 23, 42, 0.35);
-      display: none;
-      align-items: center;
-      justify-content: center;
-      z-index: 9998;
-    }
-
-    #summaryModal {
-      background: var(--bg-card);
-      border-radius: var(--radius-lg);
-      box-shadow: var(--shadow-soft);
-      border: 1px solid rgba(148, 163, 184, 0.4);
-      padding: 18px 20px 16px;
-      width: 520px;
-      max-width: 95vw;
-      font-size: 14px;
-    }
-
-    #summaryModal h3 {
-      margin-top: 0;
-      margin-bottom: 6px;
-      font-size: 16px;
-      font-weight: 600;
-      color: #111827;
-    }
-
     /* ---------- ANIMACIÓN TRES PUNTOS (LOADING) ---------- */
     .msg.loading-dots {
       color: var(--text-muted);
@@ -600,20 +570,6 @@
     </div>
   </div>
 
-  <!-- Modal de resumen de documento -->
-  <div id="summaryModalOverlay">
-    <div id="summaryModal" class="card">
-      <h3>Resumen del documento</h3>
-      <p id="summaryModalFilename" style="font-size: 12px; color: #6b7280; margin-top: 0;"></p>
-      <div id="summaryModalContent"
-           style="max-height: 50vh; overflow-y: auto; font-size: 14px; white-space: pre-wrap; margin-bottom: 12px;">
-      </div>
-      <div style="text-align: right;">
-        <button id="summaryCloseBtn" type="button">Cerrar</button>
-      </div>
-    </div>
-  </div>
-
   <script>
     const ASK_URL = "/api/ask/";
     const UPLOAD_URL = "/api/upload-files/";
@@ -678,31 +634,6 @@
         passwordInput.addEventListener("keydown", onKeyDown);
       });
     }
-
-    // ---------------------------
-    // MODAL DE RESUMEN DE DOCUMENTO
-    // ---------------------------
-    const summaryModalOverlay = document.getElementById("summaryModalOverlay");
-    const summaryModalFilename = document.getElementById("summaryModalFilename");
-    const summaryModalContent = document.getElementById("summaryModalContent");
-    const summaryCloseBtn = document.getElementById("summaryCloseBtn");
-
-    function openSummaryModal(filename, content) {
-      summaryModalFilename.textContent = "Archivo: " + filename;
-      summaryModalContent.innerHTML = content.replace(/\n/g, "<br>");
-      summaryModalOverlay.style.display = "flex";
-    }
-
-    function closeSummaryModal() {
-      summaryModalOverlay.style.display = "none";
-    }
-
-    summaryCloseBtn.addEventListener("click", closeSummaryModal);
-    summaryModalOverlay.addEventListener("click", (e) => {
-      if (e.target === summaryModalOverlay) {
-        closeSummaryModal();
-      }
-    });
 
     // Elementos del chat
     const form = document.getElementById("form");
@@ -795,6 +726,7 @@
           actions.appendChild(summarizeBtn);
           actions.appendChild(deleteBtn);
 
+
           li.appendChild(main);
           li.appendChild(actions);
           filesList.appendChild(li);
@@ -845,31 +777,6 @@
         const p = document.createElement("p");
         p.textContent = "Error de conexión al cargar detalles.";
         fileDetails.appendChild(p);
-      }
-    }
-
-    async function summarizeFile(filename) {
-      // Abrimos modal con mensaje de carga
-      openSummaryModal(filename, "Generando resumen del documento, por favor espera…");
-
-      try {
-        const res = await fetch(
-          SUMMARIZE_URL + "?filename=" + encodeURIComponent(filename)
-        );
-
-        if (!res.ok) {
-          summaryModalContent.textContent =
-            "No se ha podido generar el resumen (código " + res.status + ").";
-          return;
-        }
-
-        const data = await res.json();
-        const textoResumen = data.summary || "No se ha recibido contenido de resumen.";
-        summaryModalContent.innerHTML = textoResumen.replace(/\n/g, "<br>");
-      } catch (err) {
-        console.error(err);
-        summaryModalContent.textContent =
-          "Error de conexión al generar el resumen. Inténtalo de nuevo más tarde.";
       }
     }
 
