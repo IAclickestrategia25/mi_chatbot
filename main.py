@@ -279,7 +279,6 @@ async def add_documents(
 # -------------------------------------------------
 # ENDPOINT: SUBIR PDFs, DOCX, PNG, JPG, CSV DESDE EL NAVEGADOR (PROTEGIDO)
 # -------------------------------------------------
-
 @app.post("/api/upload-files/")
 async def upload_files(
     files: List[UploadFile] = File(...),
@@ -536,7 +535,7 @@ async def ask_documents(body: AskBody, col=Depends(get_chroma_collection)):
 
     return {
         "respuesta": respuesta,
-        "fuentes": list({ meta.get("filename", "desconocido") for _, meta, _ in filtrados }),
+        "fuentes": list({meta.get("filename", "desconocido") for _, meta, _ in filtrados}),
         "fragmentos_usados": [doc for doc, _, _ in filtrados],
         "distancias": [float(dist) for _, _, dist in filtrados],
     }
@@ -604,6 +603,87 @@ async def file_fragments(
     return {
         "filename": filename,
         "documentos": docs or [],
+    }
+
+
+# -------------------------------------------------
+# NUEVO ENDPOINT: RESUMEN DE UN ARCHIVO COMPLETO
+# -------------------------------------------------
+@app.get("/api/summarize/")
+async def summarize_document(
+    filename: str,
+    col=Depends(get_chroma_collection),
+):
+    """
+    Genera un resumen ejecutivo del documento indicado por 'filename',
+    usando los fragmentos almacenados en Chroma.
+    Devuelve un texto estructurado con:
+      - Resumen general
+      - Puntos clave
+      - Riesgos u oportunidades
+      - Recomendaciones
+    """
+    if not filename:
+        raise HTTPException(status_code=400, detail="Debe indicarse un nombre de archivo.")
+
+    # Limitamos el número de fragmentos para no pasarnos de tokens
+    try:
+        res = col.get(
+            where={"filename": filename},
+            include=["documents"],
+            limit=80,  # puedes ajustar este número si quieres más/menos contexto
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error leyendo de Chroma: {e}")
+
+    docs = res.get("documents", [])
+
+    # Normalizar si viene como lista de listas
+    if docs and isinstance(docs[0], list):
+        docs = docs[0]
+
+    if not docs:
+        return {
+            "filename": filename,
+            "summary": "No se han encontrado fragmentos para este archivo. Puede que aún no esté indexado correctamente.",
+        }
+
+    # Unimos todos los fragmentos seleccionados
+    contexto = "\n\n".join(docs)
+
+    system_msg = (
+        "Eres un asistente que elabora resúmenes ejecutivos en español a partir de fragmentos de documentos.\n"
+        "Debes basarte EXCLUSIVAMENTE en el texto proporcionado, sin inventar información externa.\n\n"
+        "Estructura SIEMPRE la respuesta con estos apartados y títulos en negrita:\n"
+        "1) **Resumen general**\n"
+        "2) **Puntos clave** (usa viñetas)\n"
+        "3) **Riesgos u oportunidades**\n"
+        "4) **Recomendaciones prácticas**\n\n"
+        "Sé claro y sintético, pero sin omitir los aspectos importantes que aparezcan en el texto."
+    )
+
+    user_msg = (
+        f"Este texto corresponde al archivo: {filename}.\n\n"
+        "A continuación tienes fragmentos de su contenido. Elabora el resumen ejecutivo solicitado:\n\n"
+        f"{contexto}"
+    )
+
+    try:
+        completion = openai_client.chat.completions.create(
+            model="gpt-4.1-mini",
+            temperature=0.2,
+            messages=[
+                {"role": "system", "content": system_msg},
+                {"role": "user", "content": user_msg},
+            ],
+        )
+        summary = completion.choices[0].message.content.strip()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error llamando a OpenAI para el resumen: {e}")
+
+    return {
+        "filename": filename,
+        "summary": summary,
     }
 
 
