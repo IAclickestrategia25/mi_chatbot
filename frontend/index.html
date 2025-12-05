@@ -843,8 +843,20 @@
           addMessage("Se ha producido un error al consultar la API (" + res.status + ").", "bot");
         } else {
           const data = await res.json();
+
+          // Mostrar la respuesta principal
           addMessage(data.respuesta || "No se ha recibido contenido de respuesta.", "bot");
+
+          // Añadir las fuentes utilizadas
+          if (data.fuentes && data.fuentes.length > 0) {
+            const listaFuentes = data.fuentes.map(f => "• " + f).join("<br>");
+            addMessage(
+              `<small><strong>Fuentes utilizadas:</strong><br>${listaFuentes}</small>`,
+              "bot"
+            );
+          }
         }
+
       } catch (err) {
         console.error(err);
         if (loadingMsg && loadingMsg.parentNode) {

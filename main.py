@@ -536,6 +536,7 @@ async def ask_documents(body: AskBody, col=Depends(get_chroma_collection)):
 
     return {
         "respuesta": respuesta,
+        "fuentes": list({ meta.get("filename", "desconocido") for _, meta, _ in filtrados }),
         "fragmentos_usados": [doc for doc, _, _ in filtrados],
         "distancias": [float(dist) for _, _, dist in filtrados],
     }
