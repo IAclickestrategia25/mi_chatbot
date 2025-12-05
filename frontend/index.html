@@ -484,6 +484,25 @@
       padding: 8px 14px;
       font-size: 13px;
     }
+
+    /* ---------- ANIMACIÓN TRES PUNTOS (LOADING) ---------- */
+    .msg.loading-dots {
+      color: var(--text-muted);
+      font-style: italic;
+      min-width: 24px;
+    }
+
+    .msg.loading-dots::after {
+      content: "...";
+      display: inline-block;
+      animation: dotsBlink 1s infinite;
+    }
+
+    @keyframes dotsBlink {
+      0%   { opacity: 0.2; }
+      50%  { opacity: 1; }
+      100% { opacity: 0.2; }
+    }
   </style>
 </head>
 <body>
@@ -632,12 +651,13 @@
     const indexEmpty = document.getElementById("index-empty");
     const indexRefreshBtn = document.getElementById("index-refresh");
 
-    function addMessage(text, who = "bot") {
+    function addMessage(text, who = "bot", extraClass = "") {
       const div = document.createElement("div");
-      div.className = "msg " + who;
+      div.className = "msg " + who + (extraClass ? " " + extraClass : "");
       div.innerHTML = text.replace(/\n/g, "<br>");
       messages.appendChild(div);
       messages.scrollTop = messages.scrollHeight;
+      return div;
     }
 
     // ---------------------------
@@ -799,6 +819,9 @@
       input.focus();
       sendButton.disabled = true;
 
+      // Mensaje de carga con tres puntos animados
+      const loadingMsg = addMessage("", "bot", "loading-dots");
+
       try {
         const body = {
           question: question,
@@ -812,6 +835,10 @@
           body: JSON.stringify(body)
         });
 
+        if (loadingMsg && loadingMsg.parentNode) {
+          loadingMsg.parentNode.removeChild(loadingMsg);
+        }
+
         if (!res.ok) {
           addMessage("Se ha producido un error al consultar la API (" + res.status + ").", "bot");
         } else {
@@ -820,6 +847,9 @@
         }
       } catch (err) {
         console.error(err);
+        if (loadingMsg && loadingMsg.parentNode) {
+          loadingMsg.parentNode.removeChild(loadingMsg);
+        }
         addMessage("Error de conexión con el servidor. Comprueba que la API está en ejecución.", "bot");
       } finally {
         sendButton.disabled = false;
@@ -878,7 +908,7 @@
           uploadProgress.hidden = true;
         }, 900);
       }
-      });
+    });
 
     // Subida con progreso y cabecera X-Admin-Token
     function uploadWithProgress(formData, token) {
