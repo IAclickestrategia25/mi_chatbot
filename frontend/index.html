@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8" />
-  <title>Asistente sobre tus documentos</title>
+  <title>Asistente personal</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
     :root {
@@ -401,6 +401,89 @@
         padding: 16px 10px;
       }
     }
+
+    /* ---------- MODAL CONTRASEÑA ---------- */
+    #passwordModalOverlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.35);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+    }
+
+    #passwordModal {
+      background: var(--bg-card);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-soft);
+      border: 1px solid rgba(148, 163, 184, 0.4);
+      padding: 18px 20px 16px;
+      width: 320px;
+      max-width: 90vw;
+      font-size: 14px;
+    }
+
+    #passwordModal h3 {
+      margin: 0 0 8px;
+      font-size: 16px;
+      font-weight: 600;
+      color: #111827;
+    }
+
+    #passwordModal p {
+      margin: 0 0 12px;
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+
+    #passwordInput {
+      width: 100%;
+      padding: 8px 10px;
+      margin-bottom: 10px;
+      border-radius: 8px;
+      border: 1px solid #cbd5e1;
+      outline: none;
+      font-size: 14px;
+    }
+
+    #passwordInput:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.18);
+    }
+
+    #passwordModalError {
+      min-height: 16px;
+      font-size: 12px;
+      color: #b91c1c;
+      margin-bottom: 8px;
+    }
+
+    #passwordModalButtons {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    #passwordCancelBtn {
+      background: #f3f4f6;
+      color: #111827;
+      box-shadow: none;
+      border-radius: 999px;
+      padding: 8px 14px;
+      font-size: 13px;
+    }
+
+    #passwordCancelBtn:hover:not(:disabled) {
+      background: #e5e7eb;
+      box-shadow: none;
+      transform: none;
+    }
+
+    #passwordOkBtn {
+      padding: 8px 14px;
+      font-size: 13px;
+    }
   </style>
 </head>
 <body>
@@ -454,6 +537,20 @@
     </div>
   </div>
 
+  <!-- Modal de contraseña de administrador -->
+  <div id="passwordModalOverlay">
+    <div id="passwordModal" class="card">
+      <h3>Acción protegida</h3>
+      <p>Introduce la contraseña de administrador para continuar.</p>
+      <input id="passwordInput" type="password" placeholder="Contraseña" />
+      <div id="passwordModalError"></div>
+      <div id="passwordModalButtons">
+        <button id="passwordCancelBtn" type="button">Cancelar</button>
+        <button id="passwordOkBtn" type="button">Aceptar</button>
+      </div>
+    </div>
+  </div>
+
   <script>
     const ASK_URL = "/api/ask/";
     const UPLOAD_URL = "/api/upload-files/";
@@ -462,15 +559,59 @@
     const DELETE_URL = "/api/delete-by-filename/";
 
     // ---------------------------
-    // GESTIÓN DE CONTRASEÑA DE ADMIN
+    // GESTIÓN DE CONTRASEÑA DE ADMIN (MODAL)
     // ---------------------------
-    let adminToken = null;
+    const passwordModalOverlay = document.getElementById("passwordModalOverlay");
+    const passwordInput = document.getElementById("passwordInput");
+    const passwordError = document.getElementById("passwordModalError");
+    const passwordCancelBtn = document.getElementById("passwordCancelBtn");
+    const passwordOkBtn = document.getElementById("passwordOkBtn");
 
-    function ensureAdminToken() {
-      if (!adminToken) {
-        adminToken = prompt("Introduce la contraseña de administrador para subir o borrar archivos:");
-      }
-      return adminToken;
+    function pedirPasswordAdmin() {
+      return new Promise((resolve) => {
+        // Mostrar modal
+        passwordModalOverlay.style.display = "flex";
+        passwordInput.value = "";
+        passwordError.textContent = "";
+        passwordInput.focus();
+
+        const cerrar = (valor) => {
+          passwordModalOverlay.style.display = "none";
+          // Limpiar eventos para no duplicar manejadores
+          passwordCancelBtn.removeEventListener("click", onCancel);
+          passwordOkBtn.removeEventListener("click", onOk);
+          passwordInput.removeEventListener("keydown", onKeyDown);
+          resolve(valor);
+        };
+
+        const onCancel = () => {
+          cerrar(null);
+        };
+
+        const onOk = () => {
+          const val = passwordInput.value.trim();
+          if (!val) {
+            passwordError.textContent = "La contraseña no puede estar vacía.";
+            passwordInput.focus();
+            return;
+          }
+          cerrar(val);
+        };
+
+        const onKeyDown = (e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            onOk();
+          } else if (e.key === "Escape") {
+            e.preventDefault();
+            onCancel();
+          }
+        };
+
+        passwordCancelBtn.addEventListener("click", onCancel);
+        passwordOkBtn.addEventListener("click", onOk);
+        passwordInput.addEventListener("keydown", onKeyDown);
+      });
     }
 
     // Elementos del chat
@@ -616,7 +757,7 @@
       );
       if (!ok) return;
 
-      const token = ensureAdminToken();
+      const token = await pedirPasswordAdmin();
       if (!token) {
         alert("No se ha introducido la contraseña. Operación cancelada.");
         return;
@@ -695,7 +836,7 @@
         return;
       }
 
-      const token = ensureAdminToken();
+      const token = await pedirPasswordAdmin();
       if (!token) {
         uploadStatus.textContent = "No se ha introducido la contraseña. Subida cancelada.";
         return;
@@ -737,7 +878,7 @@
           uploadProgress.hidden = true;
         }, 900);
       }
-    });
+      });
 
     // Subida con progreso y cabecera X-Admin-Token
     function uploadWithProgress(formData, token) {
