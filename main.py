@@ -279,6 +279,7 @@ async def add_documents(
 # -------------------------------------------------
 # ENDPOINT: SUBIR PDFs, DOCX, PNG, JPG, CSV DESDE EL NAVEGADOR (PROTEGIDO)
 # -------------------------------------------------
+
 @app.post("/api/upload-files/")
 async def upload_files(
     files: List[UploadFile] = File(...),
@@ -289,6 +290,10 @@ async def upload_files(
     Recibe ficheros (PDF, DOCX, PNG, JPG/JPEG, CSV) desde el navegador,
     extrae el texto o la descripción y los indexa directamente en Chroma.
     Solo permite la subida si el token de admin es correcto.
+
+    Para evitar errores con documentos muy grandes (por ejemplo un PDF de
+    cientos de páginas), los fragmentos se envían a Chroma en lotes más
+    pequeños en lugar de hacer una sola llamada gigante.
     """
     # Protección por token
     if ADMIN_TOKEN and admin_token != ADMIN_TOKEN:
@@ -297,12 +302,14 @@ async def upload_files(
             detail="Token de administrador incorrecto para subir archivos.",
         )
 
-    ids: List[str] = []
-    docs: List[str] = []
-    metadatas: List[Dict[str, Any]] = []
-
     if not files:
         raise HTTPException(status_code=400, detail="No se ha enviado ningún archivo.")
+
+    # Tamaño máximo de lote al enviar a Chroma (número de fragmentos)
+    BATCH_SIZE = 200
+
+    total_archivos = 0
+    total_fragmentos = 0
 
     for file in files:
         filename = file.filename
@@ -335,13 +342,19 @@ async def upload_files(
             print(f"Sin texto/descripcion útil en {filename}, se omite.")
             continue
 
+        # Troceamos el texto del archivo en fragmentos
         fragmentos = trocear_texto(texto, max_chars=800)
+
+        # Enviar a Chroma en lotes pequeños
+        batch_ids: List[str] = []
+        batch_docs: List[str] = []
+        batch_metas: List[Dict[str, Any]] = []
 
         for i, frag in enumerate(fragmentos):
             doc_id = f"{filename}_{i}"
-            ids.append(doc_id)
-            docs.append(frag)
-            metadatas.append(
+            batch_ids.append(doc_id)
+            batch_docs.append(frag)
+            batch_metas.append(
                 {
                     "filename": filename,
                     "chunk": i,
@@ -349,7 +362,33 @@ async def upload_files(
                 }
             )
 
-    if not ids:
+            # Cuando el lote alcanza el tamaño máximo, lo enviamos a Chroma
+            if len(batch_ids) >= BATCH_SIZE:
+                try:
+                    col.add(ids=batch_ids, documents=batch_docs, metadatas=batch_metas)
+                except Exception as e:
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"Error guardando en Chroma (lote) para {filename}: {e}",
+                    )
+                total_fragmentos += len(batch_ids)
+                # Reseteamos el lote
+                batch_ids, batch_docs, batch_metas = [], [], []
+
+        # Enviar el último lote (si queda algo pendiente)
+        if batch_ids:
+            try:
+                col.add(ids=batch_ids, documents=batch_docs, metadatas=batch_metas)
+            except Exception as e:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Error guardando en Chroma (último lote) para {filename}: {e}",
+                )
+            total_fragmentos += len(batch_ids)
+
+        total_archivos += 1
+
+    if total_archivos == 0:
         # En lugar de devolver 400, devolvemos éxito pero indicando que no se ha indexado nada
         return {
             "message": (
@@ -357,22 +396,14 @@ async def upload_files(
                 "texto útil para indexarlos. Es posible que sean PDFs escaneados "
                 "o imágenes sin texto."
             ),
-            "total_archivos": len(files),
+            "total_archivos": 0,
             "total_fragmentos": 0,
         }
 
-    try:
-        col.add(ids=ids, documents=docs, metadatas=metadatas)
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error guardando en Chroma: {e}",
-        )
-
     return {
         "message": "Archivos procesados e indexados correctamente.",
-        "total_archivos": len(files),
-        "total_fragmentos": len(ids),
+        "total_archivos": total_archivos,
+        "total_fragmentos": total_fragmentos,
     }
 
 
