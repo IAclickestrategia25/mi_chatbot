@@ -106,20 +106,68 @@
       color: var(--text-muted);
       text-align: center;
     }
+
+    .error {
+      margin-top: 8px;
+      font-size: 13px;
+      color: #b91c1c;
+      min-height: 16px;
+    }
   </style>
 </head>
 <body>
   <div class="card">
     <h1>Acceso al asistente</h1>
     <p>Introduce la contraseña facilitada para acceder a tu asistente personal.</p>
-    <form action="/login" method="POST">
+
+    <form id="loginForm" action="/login" method="POST">
       <label for="password">Contraseña</label>
       <input id="password" name="password" type="password" required autofocus />
       <button type="submit">Entrar</button>
+      <div id="loginError" class="error"></div>
     </form>
+
     <div class="note">
       Desarrollado por Click Estrategia.
     </div>
   </div>
+
+  <script>
+    const form = document.getElementById("loginForm");
+    const passwordInput = document.getElementById("password");
+    const errorBox = document.getElementById("loginError");
+    const button = form.querySelector("button");
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      errorBox.textContent = "";
+      button.disabled = true;
+
+      const formData = new FormData();
+      formData.append("password", passwordInput.value);
+
+      try {
+        const res = await fetch("/login", {
+          method: "POST",
+          body: formData
+        });
+
+        const data = await res.json().catch(() => ({}));
+
+        if (res.ok && data.ok) {
+          // Contraseña correcta: vamos al asistente
+          window.location.href = "/";
+        } else {
+          // Error devuelto por el backend (ej. contraseña incorrecta)
+          errorBox.textContent = data.error || "Error al iniciar sesión.";
+        }
+      } catch (err) {
+        console.error(err);
+        errorBox.textContent = "Error de conexión con el servidor.";
+      } finally {
+        button.disabled = false;
+      }
+    });
+  </script>
 </body>
 </html>

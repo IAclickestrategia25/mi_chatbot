@@ -23,11 +23,10 @@ from fastapi import (
 )
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, RedirectResponse, HTMLResponse
+from fastapi.responses import FileResponse, RedirectResponse, HTMLResponse, JSONResponse
 
 from pydantic import BaseModel
 from chroma_connection import get_chroma_collection
-
 
 # -------------------------------------------------
 # CARGA .env Y CLIENTE OPENAI
@@ -117,33 +116,35 @@ async def login_page(request: Request):
 async def do_login(request: Request):
     """
     Recibe el formulario de login (campo 'password') y, si es correcto,
-    crea una cookie de sesión y redirige al asistente.
+    crea una cookie de sesión y responde en JSON.
+    El frontend se encarga de redirigir o mostrar el error.
     """
     form = await request.form()
     password = form.get("password", "")
 
     if not CLIENT_PASSWORD:
-        return HTMLResponse(
-            "No hay contraseña de cliente configurada en el servidor.",
+        return JSONResponse(
+            {"ok": False, "error": "No hay contraseña de cliente configurada en el servidor."},
             status_code=500,
         )
 
     if password != CLIENT_PASSWORD:
-        return HTMLResponse(
-            "<h3>Contraseña incorrecta</h3><p><a href='/login'>Volver al login</a></p>",
+        return JSONResponse(
+            {"ok": False, "error": "Contraseña incorrecta"},
             status_code=401,
         )
 
     token = _expected_token()
-    response = RedirectResponse(url="/", status_code=303)
+    response = JSONResponse({"ok": True})
     response.set_cookie(
         AUTH_COOKIE_NAME,
         token,
         httponly=True,
         samesite="lax",
-        # Si usas HTTPS en producción, puedes añadir: secure=True
+        # secure=True  # si usas HTTPS en producción, puedes activarlo
     )
     return response
+
 
 
 # (Opcional) logout sencillo
