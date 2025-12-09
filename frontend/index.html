@@ -576,7 +576,7 @@
     const INDEX_URL = "/api/index-summary/";
     const FRAGMENTS_URL = "/api/file-fragments/";
     const DELETE_URL = "/api/delete-by-filename/";
-    const SUMMARIZE_URL = "/api/summarize/";
+
 
 
     // ---------------------------
@@ -718,7 +718,6 @@
           deleteBtn.addEventListener("click", () => deleteFile(item.filename));
 
           actions.appendChild(viewBtn);
-          actions.appendChild(summarizeBtn);
           actions.appendChild(deleteBtn);
 
 
