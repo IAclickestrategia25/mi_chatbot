@@ -128,25 +128,32 @@ async def do_login(request: Request):
     form = await request.form()
     password = form.get("password", "")
 
-    # IP del cliente (para control de intentos)
+    # IP del cliente
     client_ip = request.client.host if request.client else "unknown"
+    # User-Agent del navegador/dispositivo
+    user_agent = request.headers.get("user-agent", "unknown")
 
-    # 1) Comprobar si la IP está bloqueada temporalmente
-    block_info = FAILED_ATTEMPTS.get(client_ip)
+    # Clave de dispositivo: IP + User-Agent (recortado para no hacerlo eterno)
+    device_key = f"{client_ip}|{user_agent[:80]}"
+
     now = datetime.utcnow()
+
+    # 1) Comprobar si este "dispositivo" está bloqueado temporalmente
+    block_info = FAILED_ATTEMPTS.get(device_key)
     if block_info and block_info.get("until") and block_info["until"] > now:
         remaining_seconds = int((block_info["until"] - now).total_seconds())
         remaining_minutes = max(1, remaining_seconds // 60)
         return JSONResponse(
             {
                 "ok": False,
-                "error": f"Demasiados intentos fallidos. Inténtalo de nuevo en {remaining_minutes} minuto(s).",
+                "error": f"Demasiados intentos fallidos en este dispositivo. "
+                         f"Inténtalo de nuevo en {remaining_minutes} minuto(s).",
             },
             status_code=429,
         )
     elif block_info and block_info.get("until") and block_info["until"] <= now:
         # Bloqueo expirado -> limpiamos
-        del FAILED_ATTEMPTS[client_ip]
+        del FAILED_ATTEMPTS[device_key]
 
     if not CLIENT_PASSWORD:
         return JSONResponse(
@@ -154,24 +161,24 @@ async def do_login(request: Request):
             status_code=500,
         )
 
-    # 2) Contraseña incorrecta -> registrar intento
+    # 2) Contraseña incorrecta -> registrar intento para este dispositivo
     if password != CLIENT_PASSWORD:
-        data = FAILED_ATTEMPTS.get(client_ip, {"count": 0, "until": None})
+        data = FAILED_ATTEMPTS.get(device_key, {"count": 0, "until": None})
         data["count"] += 1
 
         # Si se supera el límite, se bloquea durante X minutos
         if data["count"] >= MAX_ATTEMPTS:
             data["until"] = now + timedelta(minutes=BLOCK_TIME_MINUTES)
-        FAILED_ATTEMPTS[client_ip] = data
+        FAILED_ATTEMPTS[device_key] = data
 
         return JSONResponse(
             {"ok": False, "error": "Contraseña incorrecta"},
             status_code=401,
         )
 
-    # 3) Login correcto -> limpiar intentos fallidos de esa IP
-    if client_ip in FAILED_ATTEMPTS:
-        del FAILED_ATTEMPTS[client_ip]
+    # 3) Login correcto -> limpiar intentos fallidos de este dispositivo
+    if device_key in FAILED_ATTEMPTS:
+        del FAILED_ATTEMPTS[device_key]
 
     # 4) Generar token de sesión nuevo y guardarlo en memoria
     token = generate_session_token()
@@ -182,15 +189,13 @@ async def do_login(request: Request):
         AUTH_COOKIE_NAME,
         token,
         httponly=True,          # el JS no puede leerla
-        secure=True,            # SOLO funciona con HTTPS (en local dev puedes poner False si te da problemas)
+        secure=True,            # SOLO funciona con HTTPS (en local podrías poner False si da problemas)
         samesite="Strict",      # previene CSRF
         max_age=60 * 60 * 12,   # 12h de sesión (ajustable)
         path="/",
     )
 
     return response
-
-
 
 
 # (Opcional) logout sencillo
