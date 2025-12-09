@@ -4,6 +4,7 @@ import base64
 import mimetypes
 from io import BytesIO, StringIO
 from typing import List, Dict, Any, Optional
+import hashlib
 
 import csv
 import fitz          # PyMuPDF para PDF
@@ -18,10 +19,11 @@ from fastapi import (
     UploadFile,
     File,
     Header,
+    Request,
 )
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse, HTMLResponse
 
 from pydantic import BaseModel
 from chroma_connection import get_chroma_collection
@@ -35,6 +37,10 @@ openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # Token de administrador para subir/borrar archivos
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN")
+
+# Contraseña de acceso del cliente (login)
+CLIENT_PASSWORD = os.getenv("CLIENT_PASSWORD")
+AUTH_COOKIE_NAME = "client_auth"
 
 
 # -------------------------------------------------
@@ -53,10 +59,99 @@ app.add_middleware(
 # Servir estáticos si algún día tienes assets separados
 app.mount("/static", StaticFiles(directory="frontend"), name="static")
 
+
+# -------------------------------------------------
+# AUTENTICACIÓN SENCILLA POR COOKIE
+# -------------------------------------------------
+def _expected_token() -> Optional[str]:
+    """
+    Calcula el hash SHA-256 de la contraseña configurada
+    para usarlo como valor de cookie.
+    """
+    if not CLIENT_PASSWORD:
+        return None
+    return hashlib.sha256(CLIENT_PASSWORD.encode("utf-8")).hexdigest()
+
+
+def is_authenticated(request: Request) -> bool:
+    """
+    Comprueba si la cookie de autenticación es válida.
+    """
+    expected = _expected_token()
+    if not expected:
+        # Si no hay contraseña configurada, se considera no autenticado
+        return False
+    cookie_val = request.cookies.get(AUTH_COOKIE_NAME)
+    return cookie_val == expected
+
+
+def require_auth(request: Request):
+    """
+    Dependencia para proteger endpoints de la API.
+    """
+    if not is_authenticated(request):
+        raise HTTPException(status_code=401, detail="No autorizado")
+
+
+# -------------------------------------------------
+# RUTAS DE FRONT (LOGIN + APP)
+# -------------------------------------------------
 # Servir el frontend en la raíz "/"
 @app.get("/")
-async def serve_frontend():
+async def serve_frontend(request: Request):
+    # Si no está autenticado, lo mandamos al login
+    if not is_authenticated(request):
+        return RedirectResponse(url="/login", status_code=302)
     return FileResponse("frontend/index.html")
+
+
+@app.get("/login")
+async def login_page(request: Request):
+    # Si ya está autenticado, lo mandamos directamente al asistente
+    if is_authenticated(request):
+        return RedirectResponse(url="/", status_code=302)
+    return FileResponse("frontend/login.html")
+
+
+@app.post("/login")
+async def do_login(request: Request):
+    """
+    Recibe el formulario de login (campo 'password') y, si es correcto,
+    crea una cookie de sesión y redirige al asistente.
+    """
+    form = await request.form()
+    password = form.get("password", "")
+
+    if not CLIENT_PASSWORD:
+        return HTMLResponse(
+            "No hay contraseña de cliente configurada en el servidor.",
+            status_code=500,
+        )
+
+    if password != CLIENT_PASSWORD:
+        return HTMLResponse(
+            "<h3>Contraseña incorrecta</h3><p><a href='/login'>Volver al login</a></p>",
+            status_code=401,
+        )
+
+    token = _expected_token()
+    response = RedirectResponse(url="/", status_code=303)
+    response.set_cookie(
+        AUTH_COOKIE_NAME,
+        token,
+        httponly=True,
+        samesite="lax",
+        # Si usas HTTPS en producción, puedes añadir: secure=True
+    )
+    return response
+
+
+# (Opcional) logout sencillo
+@app.get("/logout")
+async def logout():
+    response = RedirectResponse(url="/login", status_code=303)
+    response.delete_cookie(AUTH_COOKIE_NAME)
+    return response
 
 
 # -------------------------------------------------
@@ -259,6 +354,7 @@ def describir_imagen_bytes(data: bytes, filename: str) -> str:
 @app.post("/api/documents/")
 async def add_documents(
     body: AddDocumentsBody,
+    auth=Depends(require_auth),
     col=Depends(get_chroma_collection),
 ):
     """
@@ -279,21 +375,17 @@ async def add_documents(
 # -------------------------------------------------
 # ENDPOINT: SUBIR PDFs, DOCX, PNG, JPG, CSV DESDE EL NAVEGADOR (PROTEGIDO)
 # -------------------------------------------------
-
 @app.post("/api/upload-files/")
 async def upload_files(
     files: List[UploadFile] = File(...),
     admin_token: Optional[str] = Header(None, alias="X-Admin-Token"),
+    auth=Depends(require_auth),
     col=Depends(get_chroma_collection),
 ):
     """
     Recibe ficheros (PDF, DOCX, PNG, JPG/JPEG, CSV) desde el navegador,
     extrae el texto o la descripción y los indexa directamente en Chroma.
     Solo permite la subida si el token de admin es correcto.
-
-    Para evitar errores con documentos muy grandes (por ejemplo un PDF de
-    cientos de páginas), los fragmentos se envían a Chroma en lotes más
-    pequeños en lugar de hacer una sola llamada gigante.
     """
     # Protección por token
     if ADMIN_TOKEN and admin_token != ADMIN_TOKEN:
@@ -408,10 +500,14 @@ async def upload_files(
 
 
 # -------------------------------------------------
-# ENDPOINT: HACER PREGUNTAS A TUS DOCUMENTOS (ABIERTO)
+# ENDPOINT: HACER PREGUNTAS A TUS DOCUMENTOS
 # -------------------------------------------------
 @app.post("/api/ask/")
-async def ask_documents(body: AskBody, col=Depends(get_chroma_collection)):
+async def ask_documents(
+    body: AskBody,
+    auth=Depends(require_auth),
+    col=Depends(get_chroma_collection),
+):
     """
     1) Reescribe la pregunta a una consulta corta para Chroma.
     2) Recupera muchos candidatos de Chroma.
@@ -536,7 +632,7 @@ async def ask_documents(body: AskBody, col=Depends(get_chroma_collection)):
 
     return {
         "respuesta": respuesta,
-        "fuentes": list({ meta.get("filename", "desconocido") for _, meta, _ in filtrados }),
+        "fuentes": list({meta.get("filename", "desconocido") for _, meta, _ in filtrados}),
         "fragmentos_usados": [doc for doc, _, _ in filtrados],
         "distancias": [float(dist) for _, _, dist in filtrados],
     }
@@ -546,7 +642,10 @@ async def ask_documents(body: AskBody, col=Depends(get_chroma_collection)):
 # NUEVO ENDPOINT: RESUMEN DEL ÍNDICE (archivos + nº fragmentos)
 # -------------------------------------------------
 @app.get("/api/index-summary/")
-async def index_summary(col=Depends(get_chroma_collection)):
+async def index_summary(
+    auth=Depends(require_auth),
+    col=Depends(get_chroma_collection),
+):
     """
     Devuelve el listado de archivos presentes en la colección,
     junto con el número de fragmentos indexados por cada uno.
@@ -578,6 +677,7 @@ async def index_summary(col=Depends(get_chroma_collection)):
 async def file_fragments(
     filename: str,
     limit: int = 3,
+    auth=Depends(require_auth),
     col=Depends(get_chroma_collection),
 ):
     """
@@ -607,24 +707,18 @@ async def file_fragments(
     }
 
 
-
-
 # -------------------------------------------------
 # NUEVO ENDPOINT: RESUMEN DE UN ARCHIVO COMPLETO
 # -------------------------------------------------
 @app.get("/api/summarize/")
 async def summarize_document(
     filename: str,
+    auth=Depends(require_auth),
     col=Depends(get_chroma_collection),
 ):
     """
     Genera un resumen ejecutivo del documento indicado por 'filename',
     usando los fragmentos almacenados en Chroma.
-    Devuelve un texto estructurado con:
-      - Resumen general
-      - Puntos clave
-      - Riesgos u oportunidades
-      - Recomendaciones
     """
     if not filename:
         raise HTTPException(status_code=400, detail="Debe indicarse un nombre de archivo.")
@@ -634,7 +728,7 @@ async def summarize_document(
         res = col.get(
             where={"filename": filename},
             include=["documents"],
-            limit=80,  # puedes ajustar este número si quieres más/menos contexto
+            limit=80,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error leyendo de Chroma: {e}")
@@ -697,6 +791,7 @@ async def summarize_document(
 async def delete_by_filename(
     filename: str,
     admin_token: Optional[str] = Header(None, alias="X-Admin-Token"),
+    auth=Depends(require_auth),
     col=Depends(get_chroma_collection),
 ):
     """

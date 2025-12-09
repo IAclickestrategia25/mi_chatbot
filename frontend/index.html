@@ -711,11 +711,6 @@
           viewBtn.textContent = "Ver detalles";
           viewBtn.addEventListener("click", () => showFileDetails(item.filename));
 
-          const summarizeBtn = document.createElement("button");
-          summarizeBtn.type = "button";
-          summarizeBtn.textContent = "Resumir";
-          summarizeBtn.addEventListener("click", () => summarizeFile(item.filename));
-
           const deleteBtn = document.createElement("button");
           deleteBtn.type = "button";
           deleteBtn.textContent = "Eliminar";
