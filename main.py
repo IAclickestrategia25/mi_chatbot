@@ -25,6 +25,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, RedirectResponse, HTMLResponse, JSONResponse
 
+from datetime import datetime, timedelta
 from pydantic import BaseModel
 from chroma_connection import get_chroma_collection
 
@@ -41,7 +42,11 @@ ADMIN_TOKEN = os.getenv("ADMIN_TOKEN")
 CLIENT_PASSWORD = os.getenv("CLIENT_PASSWORD")
 AUTH_COOKIE_NAME = "client_auth"
 
-
+VALID_SESSIONS: set[str] = set()
+#Bloqueo de contraseña tras 5 intentos
+FAILED_ATTEMPTS = {}  # { "IP": {"count": X, "until": datetime } }
+MAX_ATTEMPTS = 5
+BLOCK_TIME_MINUTES = 5
 # -------------------------------------------------
 # APP FASTAPI + CORS + STATIC
 # -------------------------------------------------
@@ -62,26 +67,14 @@ app.mount("/static", StaticFiles(directory="frontend"), name="static")
 # -------------------------------------------------
 # AUTENTICACIÓN SENCILLA POR COOKIE
 # -------------------------------------------------
-def _expected_token() -> Optional[str]:
-    """
-    Calcula el hash SHA-256 de la contraseña configurada
-    para usarlo como valor de cookie.
-    """
-    if not CLIENT_PASSWORD:
-        return None
-    return hashlib.sha256(CLIENT_PASSWORD.encode("utf-8")).hexdigest()
-
-
 def is_authenticated(request: Request) -> bool:
     """
-    Comprueba si la cookie de autenticación es válida.
+    Comprueba si el token de la cookie pertenece a una sesión válida.
     """
-    expected = _expected_token()
-    if not expected:
-        # Si no hay contraseña configurada, se considera no autenticado
-        return False
     cookie_val = request.cookies.get(AUTH_COOKIE_NAME)
-    return cookie_val == expected
+    if not cookie_val:
+        return False
+    return cookie_val in VALID_SESSIONS
 
 
 def require_auth(request: Request):
@@ -91,6 +84,19 @@ def require_auth(request: Request):
     if not is_authenticated(request):
         raise HTTPException(status_code=401, detail="No autorizado")
 
+
+def generate_session_token() -> str:
+    """
+    Genera un token de sesión irrepetible a partir de la contraseña
+    y un valor aleatorio. No se reutiliza entre sesiones.
+    """
+    if not CLIENT_PASSWORD:
+        # Por seguridad, nunca debería pasar en producción
+        raise RuntimeError("CLIENT_PASSWORD no está configurada")
+
+    random_bytes = os.urandom(16)
+    raw = CLIENT_PASSWORD.encode("utf-8") + random_bytes
+    return hashlib.sha256(raw).hexdigest()
 
 # -------------------------------------------------
 # RUTAS DE FRONT (LOGIN + APP)
@@ -122,37 +128,82 @@ async def do_login(request: Request):
     form = await request.form()
     password = form.get("password", "")
 
+    # IP del cliente (para control de intentos)
+    client_ip = request.client.host if request.client else "unknown"
+
+    # 1) Comprobar si la IP está bloqueada temporalmente
+    block_info = FAILED_ATTEMPTS.get(client_ip)
+    now = datetime.utcnow()
+    if block_info and block_info.get("until") and block_info["until"] > now:
+        remaining_seconds = int((block_info["until"] - now).total_seconds())
+        remaining_minutes = max(1, remaining_seconds // 60)
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": f"Demasiados intentos fallidos. Inténtalo de nuevo en {remaining_minutes} minuto(s).",
+            },
+            status_code=429,
+        )
+    elif block_info and block_info.get("until") and block_info["until"] <= now:
+        # Bloqueo expirado -> limpiamos
+        del FAILED_ATTEMPTS[client_ip]
+
     if not CLIENT_PASSWORD:
         return JSONResponse(
             {"ok": False, "error": "No hay contraseña de cliente configurada en el servidor."},
             status_code=500,
         )
 
+    # 2) Contraseña incorrecta -> registrar intento
     if password != CLIENT_PASSWORD:
+        data = FAILED_ATTEMPTS.get(client_ip, {"count": 0, "until": None})
+        data["count"] += 1
+
+        # Si se supera el límite, se bloquea durante X minutos
+        if data["count"] >= MAX_ATTEMPTS:
+            data["until"] = now + timedelta(minutes=BLOCK_TIME_MINUTES)
+        FAILED_ATTEMPTS[client_ip] = data
+
         return JSONResponse(
             {"ok": False, "error": "Contraseña incorrecta"},
             status_code=401,
         )
 
-    token = _expected_token()
+    # 3) Login correcto -> limpiar intentos fallidos de esa IP
+    if client_ip in FAILED_ATTEMPTS:
+        del FAILED_ATTEMPTS[client_ip]
+
+    # 4) Generar token de sesión nuevo y guardarlo en memoria
+    token = generate_session_token()
+    VALID_SESSIONS.add(token)
+
     response = JSONResponse({"ok": True})
     response.set_cookie(
         AUTH_COOKIE_NAME,
         token,
-        httponly=True,
-        samesite="lax",
-        # secure=True  # si usas HTTPS en producción, puedes activarlo
+        httponly=True,          # el JS no puede leerla
+        secure=True,            # SOLO funciona con HTTPS (en local dev puedes poner False si te da problemas)
+        samesite="Strict",      # previene CSRF
+        max_age=60 * 60 * 12,   # 12h de sesión (ajustable)
+        path="/",
     )
+
     return response
+
 
 
 
 # (Opcional) logout sencillo
 @app.get("/logout")
-async def logout():
+async def logout(request: Request):
+    cookie_val = request.cookies.get(AUTH_COOKIE_NAME)
+    if cookie_val in VALID_SESSIONS:
+        VALID_SESSIONS.discard(cookie_val)
+
     response = RedirectResponse(url="/login", status_code=303)
-    response.delete_cookie(AUTH_COOKIE_NAME)
+    response.delete_cookie(AUTH_COOKIE_NAME, path="/")
     return response
+
 
 
 # -------------------------------------------------
@@ -705,83 +756,6 @@ async def file_fragments(
     return {
         "filename": filename,
         "documentos": docs or [],
-    }
-
-
-# -------------------------------------------------
-# NUEVO ENDPOINT: RESUMEN DE UN ARCHIVO COMPLETO
-# -------------------------------------------------
-@app.get("/api/summarize/")
-async def summarize_document(
-    filename: str,
-    auth=Depends(require_auth),
-    col=Depends(get_chroma_collection),
-):
-    """
-    Genera un resumen ejecutivo del documento indicado por 'filename',
-    usando los fragmentos almacenados en Chroma.
-    """
-    if not filename:
-        raise HTTPException(status_code=400, detail="Debe indicarse un nombre de archivo.")
-
-    # Limitamos el número de fragmentos para no pasarnos de tokens
-    try:
-        res = col.get(
-            where={"filename": filename},
-            include=["documents"],
-            limit=80,
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error leyendo de Chroma: {e}")
-
-    docs = res.get("documents", [])
-
-    # Normalizar si viene como lista de listas
-    if docs and isinstance(docs[0], list):
-        docs = docs[0]
-
-    if not docs:
-        return {
-            "filename": filename,
-            "summary": "No se han encontrado fragmentos para este archivo. Puede que aún no esté indexado correctamente.",
-        }
-
-    # Unimos todos los fragmentos seleccionados
-    contexto = "\n\n".join(docs)
-
-    system_msg = (
-        "Eres un asistente que elabora resúmenes ejecutivos en español a partir de fragmentos de documentos.\n"
-        "Debes basarte EXCLUSIVAMENTE en el texto proporcionado, sin inventar información externa.\n\n"
-        "Estructura SIEMPRE la respuesta con estos apartados y títulos en negrita:\n"
-        "1) **Resumen general**\n"
-        "2) **Puntos clave** (usa viñetas)\n"
-        "3) **Riesgos u oportunidades**\n"
-        "4) **Recomendaciones prácticas**\n\n"
-        "Sé claro y sintético, pero sin omitir los aspectos importantes que aparezcan en el texto."
-    )
-
-    user_msg = (
-        f"Este texto corresponde al archivo: {filename}.\n\n"
-        "A continuación tienes fragmentos de su contenido. Elabora el resumen ejecutivo solicitado:\n\n"
-        f"{contexto}"
-    )
-
-    try:
-        completion = openai_client.chat.completions.create(
-            model="gpt-4.1-mini",
-            temperature=0.2,
-            messages=[
-                {"role": "system", "content": system_msg},
-                {"role": "user", "content": user_msg},
-            ],
-        )
-        summary = completion.choices[0].message.content.strip()
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error llamando a OpenAI para el resumen: {e}")
-
-    return {
-        "filename": filename,
-        "summary": summary,
     }
 
 
