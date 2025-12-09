@@ -41,6 +41,14 @@
       margin-bottom: 20px;
     }
 
+    /* nuevo: cabecera con botón de modo */
+    .header-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
+    }
+
     .title {
       font-size: 26px;
       font-weight: 700;
@@ -55,6 +63,42 @@
       font-size: 14px;
       color: var(--text-muted);
       max-width: 640px;
+    }
+
+    .mode-switch {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    #modeLabel {
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: #e5edff;
+      color: #1d4ed8;
+      font-weight: 500;
+      white-space: nowrap;
+    }
+
+    #switchModeBtn {
+      padding: 6px 12px;
+      border-radius: 999px;
+      border: 1px solid #cbd5e1;
+      background: #f9fafb;
+      color: #111827;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      box-shadow: none;
+    }
+
+    #switchModeBtn:hover:not(:disabled) {
+      background: #e5e7eb;
+      transform: none;
+      box-shadow: none;
     }
 
     .layout {
@@ -350,7 +394,7 @@
       padding: 10px 18px;
       border-radius: 999px;
       border: none;
-      background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+      background: linear-gradient(135deg, --primary, --primary-dark);
       color: #fff;
       font-size: 14px;
       font-weight: 600;
@@ -395,6 +439,15 @@
       #uploader-controls {
         align-items: flex-start;
       }
+
+      .header-top {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+
+      .mode-switch {
+        align-items: flex-start;
+      }
     }
 
     @media (max-width: 640px) {
@@ -403,7 +456,6 @@
       }
     }
 
-    /* Animación tres puntos (loading) */
     .msg.loading-dots {
       color: var(--text-muted);
       font-style: italic;
@@ -426,11 +478,19 @@
 <body>
   <div class="page">
     <header>
-      <h1 class="title">Asistente personal</h1>
-      <p class="subtitle" id="subtitle">
-        Sube documentos y consulta su contenido de forma conversacional. El índice de conocimiento te permite ver qué archivos están cargados,
-        revisar fragmentos y eliminarlos cuando lo desees.
-      </p>
+      <div class="header-top">
+        <div>
+          <h1 class="title">Asistente personal</h1>
+          <p class="subtitle" id="subtitle">
+            Sube documentos y consulta su contenido de forma conversacional. El índice de conocimiento te permite ver qué archivos están cargados,
+            revisar fragmentos y eliminarlos cuando lo desees.
+          </p>
+        </div>
+        <div class="mode-switch">
+          <span id="modeLabel"></span>
+          <button id="switchModeBtn" type="button">Cambiar de modo</button>
+        </div>
+      </div>
     </header>
 
     <div class="layout">
@@ -485,31 +545,40 @@
     const userRole = localStorage.getItem("assistant_role") || "user";
     const isAdmin = userRole === "admin";
 
-    // Ajustar interfaz según rol
+    // Elementos modo
+    const modeLabelEl = document.getElementById("modeLabel");
+    const switchModeBtn = document.getElementById("switchModeBtn");
     const uploaderSection = document.getElementById("uploader");
     const subtitle = document.getElementById("subtitle");
 
+    modeLabelEl.textContent = isAdmin ? "Modo: administrador" : "Modo: usuario";
+
+    // Cambiar de modo: limpiar rol + hacer logout (borra cookie y redirige a /login)
+    switchModeBtn.addEventListener("click", () => {
+      localStorage.removeItem("assistant_role");
+      window.location.href = "/logout";
+    });
+
     if (!isAdmin) {
-      // Usuario normal: sin subida ni borrado, solo consulta
       uploaderSection.style.display = "none";
       subtitle.textContent =
         "Consulta el contenido de los documentos cargados de forma conversacional. " +
         "Puedes revisar qué archivos hay en el índice y ver algunos fragmentos de ejemplo.";
     }
 
-    // Elementos del chat
+    // Chat
     const form = document.getElementById("form");
     const input = document.getElementById("input");
     const messages = document.getElementById("messages");
     const sendButton = form.querySelector("button");
 
-    // Elementos del uploader (solo se usarán si isAdmin)
+    // Uploader
     const fileInput = document.getElementById("fileInput");
     const uploadBtn = document.getElementById("uploadBtn");
     const uploadStatus = document.getElementById("uploadStatus");
     const uploadProgress = document.getElementById("uploadProgress");
 
-    // Índice de conocimiento
+    // Índice
     const filesList = document.getElementById("filesList");
     const fileDetails = document.getElementById("fileDetails");
     const indexEmpty = document.getElementById("index-empty");
@@ -524,9 +593,6 @@
       return div;
     }
 
-    // ---------------------------
-    // CARGAR ÍNDICE DE CONOCIMIENTO
-    // ---------------------------
     async function loadIndex() {
       filesList.innerHTML = "";
       fileDetails.innerHTML = "";
@@ -672,9 +738,6 @@
 
     indexRefreshBtn.addEventListener("click", loadIndex);
 
-    // ---------------------------
-    // Envío de preguntas al /api/ask
-    // ---------------------------
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
       const question = input.value.trim();
@@ -734,9 +797,7 @@
       }
     });
 
-    // ---------------------------
-    // Subida de ficheros (solo admin, sin contraseña adicional)
-    // ---------------------------
+    // Subida de ficheros (solo admin)
     if (isAdmin) {
       uploadBtn.addEventListener("click", async () => {
         const files = fileInput.files;
@@ -810,7 +871,6 @@
       });
     }
 
-    // Mensaje inicial + carga inicial del índice
     addMessage(
       "Hola, soy el asistente. Responderé basándome únicamente en los documentos indexados.",
       "bot"
