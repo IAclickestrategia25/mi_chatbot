@@ -167,6 +167,7 @@
       color: #374151;
       box-shadow: none;
       font-weight: 500;
+      cursor: pointer;
     }
 
     .file-actions button:hover:not(:disabled) {
@@ -402,90 +403,7 @@
       }
     }
 
-    /* ---------- MODAL CONTRASEÑA ---------- */
-    #passwordModalOverlay {
-      position: fixed;
-      inset: 0;
-      background: rgba(15, 23, 42, 0.35);
-      display: none;
-      align-items: center;
-      justify-content: center;
-      z-index: 9999;
-    }
-
-    #passwordModal {
-      background: var(--bg-card);
-      border-radius: var(--radius-lg);
-      box-shadow: var(--shadow-soft);
-      border: 1px solid rgba(148, 163, 184, 0.4);
-      padding: 18px 20px 16px;
-      width: 320px;
-      max-width: 90vw;
-      font-size: 14px;
-    }
-
-    #passwordModal h3 {
-      margin: 0 0 8px;
-      font-size: 16px;
-      font-weight: 600;
-      color: #111827;
-    }
-
-    #passwordModal p {
-      margin: 0 0 12px;
-      font-size: 13px;
-      color: var(--text-muted);
-    }
-
-    #passwordInput {
-      width: 100%;
-      padding: 8px 10px;
-      margin-bottom: 10px;
-      border-radius: 8px;
-      border: 1px solid #cbd5e1;
-      outline: none;
-      font-size: 14px;
-    }
-
-    #passwordInput:focus {
-      border-color: var(--primary);
-      box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.18);
-    }
-
-    #passwordModalError {
-      min-height: 16px;
-      font-size: 12px;
-      color: #b91c1c;
-      margin-bottom: 8px;
-    }
-
-    #passwordModalButtons {
-      display: flex;
-      justify-content: flex-end;
-      gap: 8px;
-    }
-
-    #passwordCancelBtn {
-      background: #f3f4f6;
-      color: #111827;
-      box-shadow: none;
-      border-radius: 999px;
-      padding: 8px 14px;
-      font-size: 13px;
-    }
-
-    #passwordCancelBtn:hover:not(:disabled) {
-      background: #e5e7eb;
-      box-shadow: none;
-      transform: none;
-    }
-
-    #passwordOkBtn {
-      padding: 8px 14px;
-      font-size: 13px;
-    }
-
-    /* ---------- ANIMACIÓN TRES PUNTOS (LOADING) ---------- */
+    /* Animación tres puntos (loading) */
     .msg.loading-dots {
       color: var(--text-muted);
       font-style: italic;
@@ -509,7 +427,7 @@
   <div class="page">
     <header>
       <h1 class="title">Asistente personal</h1>
-      <p class="subtitle">
+      <p class="subtitle" id="subtitle">
         Sube documentos y consulta su contenido de forma conversacional. El índice de conocimiento te permite ver qué archivos están cargados,
         revisar fragmentos y eliminarlos cuando lo desees.
       </p>
@@ -556,20 +474,6 @@
     </div>
   </div>
 
-  <!-- Modal de contraseña de administrador -->
-  <div id="passwordModalOverlay">
-    <div id="passwordModal" class="card">
-      <h3>Acción protegida</h3>
-      <p>Introduce la contraseña de administrador para continuar.</p>
-      <input id="passwordInput" type="password" placeholder="Contraseña" />
-      <div id="passwordModalError"></div>
-      <div id="passwordModalButtons">
-        <button id="passwordCancelBtn" type="button">Cancelar</button>
-        <button id="passwordOkBtn" type="button">Aceptar</button>
-      </div>
-    </div>
-  </div>
-
   <script>
     const ASK_URL = "/api/ask/";
     const UPLOAD_URL = "/api/upload-files/";
@@ -577,62 +481,20 @@
     const FRAGMENTS_URL = "/api/file-fragments/";
     const DELETE_URL = "/api/delete-by-filename/";
 
+    // Rol guardado durante el login (admin/user)
+    const userRole = localStorage.getItem("assistant_role") || "user";
+    const isAdmin = userRole === "admin";
 
+    // Ajustar interfaz según rol
+    const uploaderSection = document.getElementById("uploader");
+    const subtitle = document.getElementById("subtitle");
 
-    // ---------------------------
-    // GESTIÓN DE CONTRASEÑA DE ADMIN (MODAL)
-    // ---------------------------
-    const passwordModalOverlay = document.getElementById("passwordModalOverlay");
-    const passwordInput = document.getElementById("passwordInput");
-    const passwordError = document.getElementById("passwordModalError");
-    const passwordCancelBtn = document.getElementById("passwordCancelBtn");
-    const passwordOkBtn = document.getElementById("passwordOkBtn");
-
-    function pedirPasswordAdmin() {
-      return new Promise((resolve) => {
-        // Mostrar modal
-        passwordModalOverlay.style.display = "flex";
-        passwordInput.value = "";
-        passwordError.textContent = "";
-        passwordInput.focus();
-
-        const cerrar = (valor) => {
-          passwordModalOverlay.style.display = "none";
-          // Limpiar eventos para no duplicar manejadores
-          passwordCancelBtn.removeEventListener("click", onCancel);
-          passwordOkBtn.removeEventListener("click", onOk);
-          passwordInput.removeEventListener("keydown", onKeyDown);
-          resolve(valor);
-        };
-
-        const onCancel = () => {
-          cerrar(null);
-        };
-
-        const onOk = () => {
-          const val = passwordInput.value.trim();
-          if (!val) {
-            passwordError.textContent = "La contraseña no puede estar vacía.";
-            passwordInput.focus();
-            return;
-          }
-          cerrar(val);
-        };
-
-        const onKeyDown = (e) => {
-          if (e.key === "Enter") {
-            e.preventDefault();
-            onOk();
-          } else if (e.key === "Escape") {
-            e.preventDefault();
-            onCancel();
-          }
-        };
-
-        passwordCancelBtn.addEventListener("click", onCancel);
-        passwordOkBtn.addEventListener("click", onOk);
-        passwordInput.addEventListener("keydown", onKeyDown);
-      });
+    if (!isAdmin) {
+      // Usuario normal: sin subida ni borrado, solo consulta
+      uploaderSection.style.display = "none";
+      subtitle.textContent =
+        "Consulta el contenido de los documentos cargados de forma conversacional. " +
+        "Puedes revisar qué archivos hay en el índice y ver algunos fragmentos de ejemplo.";
     }
 
     // Elementos del chat
@@ -641,7 +503,7 @@
     const messages = document.getElementById("messages");
     const sendButton = form.querySelector("button");
 
-    // Elementos del uploader
+    // Elementos del uploader (solo se usarán si isAdmin)
     const fileInput = document.getElementById("fileInput");
     const uploadBtn = document.getElementById("uploadBtn");
     const uploadStatus = document.getElementById("uploadStatus");
@@ -673,7 +535,11 @@
       try {
         const res = await fetch(INDEX_URL);
         if (!res.ok) {
-          indexEmpty.textContent = "Error al cargar el índice (" + res.status + ").";
+          if (res.status === 401) {
+            indexEmpty.textContent = "Sesión no válida. Vuelve a iniciar sesión.";
+          } else {
+            indexEmpty.textContent = "Error al cargar el índice (" + res.status + ").";
+          }
           indexEmpty.style.display = "block";
           return;
         }
@@ -681,7 +547,7 @@
         const archivos = data.archivos || [];
 
         if (archivos.length === 0) {
-          indexEmpty.textContent = "No hay documentos indexados todavía. Sube uno para empezar.";
+          indexEmpty.textContent = "No hay documentos indexados todavía.";
           indexEmpty.style.display = "block";
           return;
         }
@@ -710,16 +576,16 @@
           viewBtn.type = "button";
           viewBtn.textContent = "Ver detalles";
           viewBtn.addEventListener("click", () => showFileDetails(item.filename));
-
-          const deleteBtn = document.createElement("button");
-          deleteBtn.type = "button";
-          deleteBtn.textContent = "Eliminar";
-          deleteBtn.classList.add("delete");
-          deleteBtn.addEventListener("click", () => deleteFile(item.filename));
-
           actions.appendChild(viewBtn);
-          actions.appendChild(deleteBtn);
 
+          if (isAdmin) {
+            const deleteBtn = document.createElement("button");
+            deleteBtn.type = "button";
+            deleteBtn.textContent = "Eliminar";
+            deleteBtn.classList.add("delete");
+            deleteBtn.addEventListener("click", () => deleteFile(item.filename));
+            actions.appendChild(deleteBtn);
+          }
 
           li.appendChild(main);
           li.appendChild(actions);
@@ -746,7 +612,11 @@
         );
         if (!res.ok) {
           const p = document.createElement("p");
-          p.textContent = "No se pudieron recuperar los fragmentos (" + res.status + ").";
+          if (res.status === 403) {
+            p.textContent = "No tienes permisos para ver los fragmentos.";
+          } else {
+            p.textContent = "No se pudieron recuperar los fragmentos (" + res.status + ").";
+          }
           fileDetails.appendChild(p);
           return;
         }
@@ -780,24 +650,17 @@
       );
       if (!ok) return;
 
-      const token = await pedirPasswordAdmin();
-      if (!token) {
-        alert("No se ha introducido la contraseña. Operación cancelada.");
-        return;
-      }
-
       try {
         const res = await fetch(
           DELETE_URL + "?filename=" + encodeURIComponent(filename),
-          {
-            method: "DELETE",
-            headers: {
-              "X-Admin-Token": token,
-            },
-          }
+          { method: "DELETE" }
         );
         if (!res.ok) {
-          alert("Error al eliminar (" + res.status + ").");
+          if (res.status === 403) {
+            alert("No tienes permisos para eliminar documentos (se requiere rol de administrador).");
+          } else {
+            alert("Error al eliminar (" + res.status + ").");
+          }
           return;
         }
         await loadIndex();
@@ -822,7 +685,6 @@
       input.focus();
       sendButton.disabled = true;
 
-      // Mensaje de carga con tres puntos animados
       const loadingMsg = addMessage("", "bot", "loading-dots");
 
       try {
@@ -843,14 +705,15 @@
         }
 
         if (!res.ok) {
-          addMessage("Se ha producido un error al consultar la API (" + res.status + ").", "bot");
+          if (res.status === 401) {
+            addMessage("Sesión no válida. Vuelve a iniciar sesión.", "bot");
+          } else {
+            addMessage("Se ha producido un error al consultar la API (" + res.status + ").", "bot");
+          }
         } else {
           const data = await res.json();
-
-          // Mostrar la respuesta principal
           addMessage(data.respuesta || "No se ha recibido contenido de respuesta.", "bot");
 
-          // Añadir las fuentes utilizadas
           if (data.fuentes && data.fuentes.length > 0) {
             const listaFuentes = data.fuentes.map(f => "• " + f).join("<br>");
             addMessage(
@@ -872,68 +735,61 @@
     });
 
     // ---------------------------
-    // Subida de ficheros con barra de progreso (PROTEGIDA)
+    // Subida de ficheros (solo admin, sin contraseña adicional)
     // ---------------------------
-    uploadBtn.addEventListener("click", async () => {
-      const files = fileInput.files;
-      if (!files || files.length === 0) {
-        uploadStatus.textContent = "Selecciona al menos un archivo para comenzar.";
-        return;
-      }
-
-      const token = await pedirPasswordAdmin();
-      if (!token) {
-        uploadStatus.textContent = "No se ha introducido la contraseña. Subida cancelada.";
-        return;
-      }
-
-      const formData = new FormData();
-      for (const f of files) {
-        formData.append("files", f);
-      }
-
-      uploadBtn.disabled = true;
-      uploadStatus.textContent = "Procesando documentos…";
-      uploadProgress.hidden = false;
-      uploadProgress.value = 0;
-
-      try {
-        const response = await uploadWithProgress(formData, token);
-        if (response.status >= 200 && response.status < 300) {
-          let data;
-          try {
-            data = JSON.parse(response.body);
-          } catch {
-            data = {};
-          }
-          const frag = data.total_fragmentos ?? "?";
-          uploadStatus.textContent =
-            "Subida completada. Fragmentos indexados: " + frag + ". Ya puedes realizar consultas.";
-          fileInput.value = "";
-          await loadIndex();
-        } else {
-          uploadStatus.textContent = "Error al subir los documentos (" + response.status + ").";
+    if (isAdmin) {
+      uploadBtn.addEventListener("click", async () => {
+        const files = fileInput.files;
+        if (!files || files.length === 0) {
+          uploadStatus.textContent = "Selecciona al menos un archivo para comenzar.";
+          return;
         }
-      } catch (err) {
-        console.error(err);
-        uploadStatus.textContent = "Error de conexión durante la subida.";
-      } finally {
-        uploadBtn.disabled = false;
-        setTimeout(() => {
-          uploadProgress.hidden = true;
-        }, 900);
-      }
-    });
 
-    // Subida con progreso y cabecera X-Admin-Token
-    function uploadWithProgress(formData, token) {
+        const formData = new FormData();
+        for (const f of files) {
+          formData.append("files", f);
+        }
+
+        uploadBtn.disabled = true;
+        uploadStatus.textContent = "Procesando documentos…";
+        uploadProgress.hidden = false;
+        uploadProgress.value = 0;
+
+        try {
+          const response = await uploadWithProgress(formData);
+          if (response.status >= 200 && response.status < 300) {
+            let data;
+            try {
+              data = JSON.parse(response.body);
+            } catch {
+              data = {};
+            }
+            const frag = data.total_fragmentos ?? "?";
+            uploadStatus.textContent =
+              "Subida completada. Fragmentos indexados: " + frag + ". Ya puedes realizar consultas.";
+            fileInput.value = "";
+            await loadIndex();
+          } else if (response.status === 403) {
+            uploadStatus.textContent = "No tienes permisos para subir documentos (solo administrador).";
+          } else {
+            uploadStatus.textContent = "Error al subir los documentos (" + response.status + ").";
+          }
+        } catch (err) {
+          console.error(err);
+          uploadStatus.textContent = "Error de conexión durante la subida.";
+        } finally {
+          uploadBtn.disabled = false;
+          setTimeout(() => {
+            uploadProgress.hidden = true;
+          }, 900);
+        }
+      });
+    }
+
+    function uploadWithProgress(formData) {
       return new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
         xhr.open("POST", UPLOAD_URL);
-
-        if (token) {
-          xhr.setRequestHeader("X-Admin-Token", token);
-        }
 
         xhr.upload.onprogress = (event) => {
           if (event.lengthComputable) {
@@ -956,8 +812,7 @@
 
     // Mensaje inicial + carga inicial del índice
     addMessage(
-      "Hola, soy el asistente. Sube tus documentos y, a continuación, pregúntame sobre su contenido. " +
-      "Las respuestas se basarán exclusivamente en la información que encuentre en ellos.",
+      "Hola, soy el asistente. Responderé basándome únicamente en los documentos indexados.",
       "bot"
     );
     loadIndex();

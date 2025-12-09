@@ -18,35 +18,38 @@ from fastapi import (
     Depends,
     UploadFile,
     File,
-    Header,
     Request,
 )
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, RedirectResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, RedirectResponse, JSONResponse
 
 from datetime import datetime, timedelta
 from pydantic import BaseModel
 from chroma_connection import get_chroma_collection
 
+
 # -------------------------------------------------
-# CARGA .env Y CLIENTE OPENAI
+# CARGA VARIABLES ENTORNO Y CLIENTE OPENAI
 # -------------------------------------------------
 load_dotenv()
 openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-# Token de administrador para subir/borrar archivos
-ADMIN_TOKEN = os.getenv("ADMIN_TOKEN")
+# Contraseñas de acceso
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
+USER_PASSWORD = os.getenv("USER_PASSWORD")
 
-# Contraseña de acceso del cliente (login)
-CLIENT_PASSWORD = os.getenv("CLIENT_PASSWORD")
 AUTH_COOKIE_NAME = "client_auth"
 
-VALID_SESSIONS: set[str] = set()
-#Bloqueo de contraseña tras 5 intentos
-FAILED_ATTEMPTS = {}  # { "IP": {"count": X, "until": datetime } }
+# Sesiones válidas: token -> rol ("admin" o "user")
+VALID_SESSIONS: Dict[str, str] = {}
+
+# Bloqueo de contraseña tras X intentos por dispositivo
+FAILED_ATTEMPTS: Dict[str, Dict[str, Any]] = {}  # { "device_key": {"count": X, "until": datetime } }
 MAX_ATTEMPTS = 5
 BLOCK_TIME_MINUTES = 5
+
+
 # -------------------------------------------------
 # APP FASTAPI + CORS + STATIC
 # -------------------------------------------------
@@ -54,58 +57,64 @@ app = FastAPI(title="ChromaDB FastAPI Integration")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],       # en local y en Render está bien
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Servir estáticos si algún día tienes assets separados
 app.mount("/static", StaticFiles(directory="frontend"), name="static")
 
 
 # -------------------------------------------------
-# AUTENTICACIÓN SENCILLA POR COOKIE
+# AUTENTICACIÓN Y ROLES
 # -------------------------------------------------
-def is_authenticated(request: Request) -> bool:
+def generate_session_token() -> str:
     """
-    Comprueba si el token de la cookie pertenece a una sesión válida.
+    Genera un token de sesión irrepetible.
+    No depende de la contraseña para evitar patrones.
+    """
+    return hashlib.sha256(os.urandom(32)).hexdigest()
+
+
+def get_session_role(request: Request) -> Optional[str]:
+    """
+    Devuelve el rol asociado al token de la cookie, o None si no es válido.
     """
     cookie_val = request.cookies.get(AUTH_COOKIE_NAME)
     if not cookie_val:
-        return False
-    return cookie_val in VALID_SESSIONS
+        return None
+    return VALID_SESSIONS.get(cookie_val)
 
 
-def require_auth(request: Request):
+def require_auth(request: Request) -> str:
     """
-    Dependencia para proteger endpoints de la API.
+    Dependencia general: requiere estar logueado.
+    Devuelve el rol ("admin" o "user").
     """
-    if not is_authenticated(request):
+    role = get_session_role(request)
+    if not role:
         raise HTTPException(status_code=401, detail="No autorizado")
+    return role
 
 
-def generate_session_token() -> str:
+def require_admin(request: Request) -> str:
     """
-    Genera un token de sesión irrepetible a partir de la contraseña
-    y un valor aleatorio. No se reutiliza entre sesiones.
+    Dependencia para endpoints solo de administrador.
     """
-    if not CLIENT_PASSWORD:
-        # Por seguridad, nunca debería pasar en producción
-        raise RuntimeError("CLIENT_PASSWORD no está configurada")
+    role = require_auth(request)
+    if role != "admin":
+        raise HTTPException(status_code=403, detail="Solo disponible para administradores")
+    return role
 
-    random_bytes = os.urandom(16)
-    raw = CLIENT_PASSWORD.encode("utf-8") + random_bytes
-    return hashlib.sha256(raw).hexdigest()
 
 # -------------------------------------------------
-# RUTAS DE FRONT (LOGIN + APP)
+# RUTAS FRONTEND (LOGIN + APP)
 # -------------------------------------------------
-# Servir el frontend en la raíz "/"
 @app.get("/")
 async def serve_frontend(request: Request):
     # Si no está autenticado, lo mandamos al login
-    if not is_authenticated(request):
+    if not get_session_role(request):
         return RedirectResponse(url="/login", status_code=302)
     return FileResponse("frontend/index.html")
 
@@ -113,7 +122,7 @@ async def serve_frontend(request: Request):
 @app.get("/login")
 async def login_page(request: Request):
     # Si ya está autenticado, lo mandamos directamente al asistente
-    if is_authenticated(request):
+    if get_session_role(request):
         return RedirectResponse(url="/", status_code=302)
     return FileResponse("frontend/login.html")
 
@@ -128,17 +137,14 @@ async def do_login(request: Request):
     form = await request.form()
     password = form.get("password", "")
 
-    # IP del cliente
+    # Identificador de dispositivo: IP + user-agent
     client_ip = request.client.host if request.client else "unknown"
-    # User-Agent del navegador/dispositivo
     user_agent = request.headers.get("user-agent", "unknown")
-
-    # Clave de dispositivo: IP + User-Agent (recortado para no hacerlo eterno)
     device_key = f"{client_ip}|{user_agent[:80]}"
 
     now = datetime.utcnow()
 
-    # 1) Comprobar si este "dispositivo" está bloqueado temporalmente
+    # 1) Comprobar si el dispositivo está bloqueado
     block_info = FAILED_ATTEMPTS.get(device_key)
     if block_info and block_info.get("until") and block_info["until"] > now:
         remaining_seconds = int((block_info["until"] - now).total_seconds())
@@ -146,8 +152,10 @@ async def do_login(request: Request):
         return JSONResponse(
             {
                 "ok": False,
-                "error": f"Demasiados intentos fallidos en este dispositivo. "
-                         f"Inténtalo de nuevo en {remaining_minutes} minuto(s).",
+                "error": (
+                    f"Demasiados intentos fallidos en este dispositivo. "
+                    f"Inténtalo de nuevo en {remaining_minutes} minuto(s)."
+                ),
             },
             status_code=429,
         )
@@ -155,14 +163,21 @@ async def do_login(request: Request):
         # Bloqueo expirado -> limpiamos
         del FAILED_ATTEMPTS[device_key]
 
-    if not CLIENT_PASSWORD:
+    if not ADMIN_PASSWORD and not USER_PASSWORD:
         return JSONResponse(
-            {"ok": False, "error": "No hay contraseña de cliente configurada en el servidor."},
+            {"ok": False, "error": "No hay contraseñas configuradas en el servidor."},
             status_code=500,
         )
 
-    # 2) Contraseña incorrecta -> registrar intento para este dispositivo
-    if password != CLIENT_PASSWORD:
+    # 2) Determinar rol según la contraseña introducida
+    role: Optional[str] = None
+    if ADMIN_PASSWORD and password == ADMIN_PASSWORD:
+        role = "admin"
+    elif USER_PASSWORD and password == USER_PASSWORD:
+        role = "user"
+
+    # 3) Contraseña incorrecta -> registrar intento
+    if role is None:
         data = FAILED_ATTEMPTS.get(device_key, {"count": 0, "until": None})
         data["count"] += 1
 
@@ -176,39 +191,37 @@ async def do_login(request: Request):
             status_code=401,
         )
 
-    # 3) Login correcto -> limpiar intentos fallidos de este dispositivo
+    # 4) Login correcto -> limpiar intentos fallidos de este dispositivo
     if device_key in FAILED_ATTEMPTS:
         del FAILED_ATTEMPTS[device_key]
 
-    # 4) Generar token de sesión nuevo y guardarlo en memoria
+    # 5) Generar token de sesión y guardarlo con el rol
     token = generate_session_token()
-    VALID_SESSIONS.add(token)
+    VALID_SESSIONS[token] = role
 
-    response = JSONResponse({"ok": True})
+    response = JSONResponse({"ok": True, "role": role})
     response.set_cookie(
         AUTH_COOKIE_NAME,
         token,
-        httponly=True,          # el JS no puede leerla
-        secure=True,            # SOLO funciona con HTTPS (en local podrías poner False si da problemas)
+        httponly=True,          # JS no puede leerla
+        secure=True,            # en Render va sobre HTTPS
         samesite="Strict",      # previene CSRF
-        max_age=60 * 60 * 12,   # 12h de sesión (ajustable)
+        max_age=60 * 60 * 12,   # 12h de sesión
         path="/",
     )
 
     return response
 
 
-# (Opcional) logout sencillo
 @app.get("/logout")
 async def logout(request: Request):
     cookie_val = request.cookies.get(AUTH_COOKIE_NAME)
     if cookie_val in VALID_SESSIONS:
-        VALID_SESSIONS.discard(cookie_val)
+        VALID_SESSIONS.pop(cookie_val, None)
 
     response = RedirectResponse(url="/login", status_code=303)
     response.delete_cookie(AUTH_COOKIE_NAME, path="/")
     return response
-
 
 
 # -------------------------------------------------
@@ -231,22 +244,17 @@ class FileIndexItem(BaseModel):
     total_fragmentos: int
 
 
+# -------------------------------------------------
+# SELECCIÓN DE FRAGMENTOS RELEVANTES
+# -------------------------------------------------
 def seleccionar_fragmentos_relevantes(
     pregunta: str,
     candidatos: List[Dict[str, Any]],
     max_frag: int = 6
 ) -> List[int]:
-    """
-    Usa GPT para seleccionar los fragmentos realmente útiles
-    entre los candidatos devueltos por Chroma.
-
-    Devuelve una lista de índices (posiciones en la lista candidatos).
-    """
-
     if not candidatos:
         return []
 
-    # Construimos un texto con todos los fragmentos candidatos numerados
     partes = []
     for i, c in enumerate(candidatos):
         meta = c.get("meta", {})
@@ -287,10 +295,8 @@ def seleccionar_fragmentos_relevantes(
         )
         texto_indices = completion.choices[0].message.content.strip()
     except Exception:
-        # Si algo falla, devolvemos simplemente los primeros max_frag
         return list(range(min(max_frag, len(candidatos))))
 
-    # Parsear números tipo "0, 2, 5"
     indices: List[int] = []
     for trozo in texto_indices.replace("\n", ",").split(","):
         trozo = trozo.strip()
@@ -299,8 +305,7 @@ def seleccionar_fragmentos_relevantes(
             if 0 <= i < len(candidatos):
                 indices.append(i)
 
-    # Evitar duplicados y limitar el tamaño
-    indices_unicos = []
+    indices_unicos: List[int] = []
     for i in indices:
         if i not in indices_unicos:
             indices_unicos.append(i)
@@ -311,10 +316,6 @@ def seleccionar_fragmentos_relevantes(
 # UTILIDADES PARA TROCEAR TEXTO
 # -------------------------------------------------
 def trocear_texto(texto: str, max_chars: int = 800) -> List[str]:
-    """
-    Divide el texto en trozos de tamaño máximo max_chars,
-    intentando cortar por líneas.
-    """
     trozos: List[str] = []
     actual = ""
 
@@ -350,12 +351,7 @@ def leer_docx_bytes(data: bytes) -> str:
 
 
 def leer_csv_bytes(data: bytes, encoding: str = "utf-8") -> str:
-    """
-    Convierte un CSV (en bytes) a un texto plano legible,
-    línea a línea, para indexarlo en Chroma.
-    """
     texto = data.decode(encoding, errors="ignore")
-
     f = StringIO(texto)
     reader = csv.reader(f)
 
@@ -393,10 +389,7 @@ def describir_imagen_bytes(data: bytes, filename: str) -> str:
                 "role": "user",
                 "content": [
                     {"type": "text", "text": prompt},
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": data_url},
-                    },
+                    {"type": "image_url", "image_url": {"url": data_url}},
                 ],
             }
         ],
@@ -406,18 +399,14 @@ def describir_imagen_bytes(data: bytes, filename: str) -> str:
 
 
 # -------------------------------------------------
-# ENDPOINT: SUBIR DOCUMENTOS (JSON) A CHROMA
+# ENDPOINT: SUBIR DOCUMENTOS (JSON) A CHROMA (SOLO ADMIN)
 # -------------------------------------------------
 @app.post("/api/documents/")
 async def add_documents(
     body: AddDocumentsBody,
-    auth=Depends(require_auth),
+    role: str = Depends(require_admin),
     col=Depends(get_chroma_collection),
 ):
-    """
-    Recibe listas de ids, documents y metadatas y los guarda en la colección de Chroma.
-    Útil si indexas desde scripts Python en vez de desde el navegador.
-    """
     try:
         col.add(
             ids=body.ids,
@@ -430,33 +419,18 @@ async def add_documents(
 
 
 # -------------------------------------------------
-# ENDPOINT: SUBIR PDFs, DOCX, PNG, JPG, CSV DESDE EL NAVEGADOR (PROTEGIDO)
+# ENDPOINT: SUBIR PDFs, DOCX, PNG, JPG, CSV (SOLO ADMIN)
 # -------------------------------------------------
 @app.post("/api/upload-files/")
 async def upload_files(
     files: List[UploadFile] = File(...),
-    admin_token: Optional[str] = Header(None, alias="X-Admin-Token"),
-    auth=Depends(require_auth),
+    role: str = Depends(require_admin),
     col=Depends(get_chroma_collection),
 ):
-    """
-    Recibe ficheros (PDF, DOCX, PNG, JPG/JPEG, CSV) desde el navegador,
-    extrae el texto o la descripción y los indexa directamente en Chroma.
-    Solo permite la subida si el token de admin es correcto.
-    """
-    # Protección por token
-    if ADMIN_TOKEN and admin_token != ADMIN_TOKEN:
-        raise HTTPException(
-            status_code=403,
-            detail="Token de administrador incorrecto para subir archivos.",
-        )
-
     if not files:
         raise HTTPException(status_code=400, detail="No se ha enviado ningún archivo.")
 
-    # Tamaño máximo de lote al enviar a Chroma (número de fragmentos)
     BATCH_SIZE = 200
-
     total_archivos = 0
     total_fragmentos = 0
 
@@ -482,7 +456,6 @@ async def upload_files(
             else:
                 print(f"Saltando archivo no soportado: {filename}")
                 continue
-
         except Exception as e:
             print(f"Error procesando {filename}: {e}")
             continue
@@ -491,10 +464,8 @@ async def upload_files(
             print(f"Sin texto/descripcion útil en {filename}, se omite.")
             continue
 
-        # Troceamos el texto del archivo en fragmentos
         fragmentos = trocear_texto(texto, max_chars=800)
 
-        # Enviar a Chroma en lotes pequeños
         batch_ids: List[str] = []
         batch_docs: List[str] = []
         batch_metas: List[Dict[str, Any]] = []
@@ -511,7 +482,6 @@ async def upload_files(
                 }
             )
 
-            # Cuando el lote alcanza el tamaño máximo, lo enviamos a Chroma
             if len(batch_ids) >= BATCH_SIZE:
                 try:
                     col.add(ids=batch_ids, documents=batch_docs, metadatas=batch_metas)
@@ -521,10 +491,8 @@ async def upload_files(
                         detail=f"Error guardando en Chroma (lote) para {filename}: {e}",
                     )
                 total_fragmentos += len(batch_ids)
-                # Reseteamos el lote
                 batch_ids, batch_docs, batch_metas = [], [], []
 
-        # Enviar el último lote (si queda algo pendiente)
         if batch_ids:
             try:
                 col.add(ids=batch_ids, documents=batch_docs, metadatas=batch_metas)
@@ -538,7 +506,6 @@ async def upload_files(
         total_archivos += 1
 
     if total_archivos == 0:
-        # En lugar de devolver 400, devolvemos éxito pero indicando que no se ha indexado nada
         return {
             "message": (
                 "Los archivos se han recibido, pero no se ha podido extraer "
@@ -557,24 +524,16 @@ async def upload_files(
 
 
 # -------------------------------------------------
-# ENDPOINT: HACER PREGUNTAS A TUS DOCUMENTOS
+# ENDPOINT: HACER PREGUNTAS A TUS DOCUMENTOS (ADMIN Y USUARIO)
 # -------------------------------------------------
 @app.post("/api/ask/")
 async def ask_documents(
     body: AskBody,
-    auth=Depends(require_auth),
+    role: str = Depends(require_auth),
     col=Depends(get_chroma_collection),
 ):
-    """
-    1) Reescribe la pregunta a una consulta corta para Chroma.
-    2) Recupera muchos candidatos de Chroma.
-    3) Usa GPT para re-ranquear y elegir los fragmentos realmente relevantes.
-    4) Genera la respuesta usando SOLO esos fragmentos.
-    """
-
     pregunta_original = body.question.strip()
 
-    # ---------- 0. Reescritura de la pregunta para búsqueda ----------
     rewrite_system = (
         "Eres un asistente especializado en generación de consultas de búsqueda.\n"
         "Transforma la pregunta del usuario en una consulta MUY corta y útil para "
@@ -595,8 +554,7 @@ async def ask_documents(
     except Exception:
         consulta_chroma = pregunta_original
 
-    # ---------- 1. Consultar Chroma (recuperar bastantes candidatos) ----------
-    n_candidatos = max(body.n_results, 20)  # apunta alto para que haya material
+    n_candidatos = max(body.n_results, 20)
     try:
         res = col.query(
             query_texts=[consulta_chroma],
@@ -621,7 +579,6 @@ async def ask_documents(
             "distancias": [],
         }
 
-    # ---------- 2. Re-ranqueo con GPT para elegir los fragmentos buenos ----------
     indices_buenos = seleccionar_fragmentos_relevantes(
         pregunta=pregunta_original,
         candidatos=candidatos,
@@ -629,14 +586,12 @@ async def ask_documents(
     )
 
     if not indices_buenos:
-        # Fallback: usar los k mejores por distancia
         k = 5
         candidatos_ordenados = sorted(candidatos, key=lambda x: x["dist"])
         buenos = candidatos_ordenados[:k]
     else:
         buenos = [candidatos[i] for i in indices_buenos]
 
-    # ---------- 3. Construir contexto ----------
     contexto_partes = []
     filtrados = []
     for i, c in enumerate(buenos, start=1):
@@ -656,11 +611,9 @@ async def ask_documents(
         "que aparece en los fragmentos de texto proporcionados.\n\n"
         "Instrucciones importantes:\n"
         "1) Usa siempre los fragmentos como única fuente de verdad.\n"
-        "2) Si la pregunta es genérica (por ejemplo, 'precio productos', 'stock', "
-        "'categoría', etc.), interpreta la intención y responde resumiendo la "
-        "información relevante de los fragmentos (tablas, listas...).\n"
-        "3) Si falta un dato concreto, dilo claramente, indicando qué sí aparece en "
-        "los fragmentos y qué no se menciona.\n"
+        "2) Si la pregunta es genérica, responde resumiendo la "
+        "información relevante de los fragmentos.\n"
+        "3) Si falta un dato concreto, dilo claramente.\n"
         "4) No añadas conocimientos externos ni inventes nada.\n"
         "Responde siempre en español neutro."
     )
@@ -673,7 +626,6 @@ async def ask_documents(
         f"{contexto}"
     )
 
-    # ---------- 4. Llamar a OpenAI para generar la respuesta ----------
     try:
         completion = openai_client.chat.completions.create(
             model="gpt-4.1-mini",
@@ -696,19 +648,15 @@ async def ask_documents(
 
 
 # -------------------------------------------------
-# NUEVO ENDPOINT: RESUMEN DEL ÍNDICE (archivos + nº fragmentos)
+# ENDPOINT: RESUMEN DEL ÍNDICE (ARCHIVOS + Nº FRAGMENTOS)
 # -------------------------------------------------
 @app.get("/api/index-summary/")
 async def index_summary(
-    auth=Depends(require_auth),
+    role: str = Depends(require_auth),
     col=Depends(get_chroma_collection),
 ):
-    """
-    Devuelve el listado de archivos presentes en la colección,
-    junto con el número de fragmentos indexados por cada uno.
-    """
     try:
-        res = col.get(include=["metadatas"])  # recupera todos los metadatos
+        res = col.get(include=["metadatas"])
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error leyendo de Chroma: {e}")
 
@@ -728,19 +676,15 @@ async def index_summary(
 
 
 # -------------------------------------------------
-# NUEVO ENDPOINT: VER ALGUNOS FRAGMENTOS DE UN ARCHIVO
+# ENDPOINT: VER ALGUNOS FRAGMENTOS DE UN ARCHIVO
 # -------------------------------------------------
 @app.get("/api/file-fragments/")
 async def file_fragments(
     filename: str,
     limit: int = 3,
-    auth=Depends(require_auth),
+    role: str = Depends(require_auth),
     col=Depends(get_chroma_collection),
 ):
-    """
-    Devuelve algunos fragmentos de ejemplo de un archivo concreto.
-    Se busca por metadatas.filename == filename.
-    """
     if not filename:
         raise HTTPException(status_code=400, detail="Debe indicarse un nombre de archivo.")
 
@@ -754,7 +698,6 @@ async def file_fragments(
         raise HTTPException(status_code=500, detail=f"Error leyendo de Chroma: {e}")
 
     docs = res.get("documents", [])
-    # docs es una lista de listas en algunas versiones, normalizamos:
     if docs and isinstance(docs[0], list):
         docs = docs[0]
 
@@ -765,29 +708,16 @@ async def file_fragments(
 
 
 # -------------------------------------------------
-# NUEVO ENDPOINT: ELIMINAR TODOS LOS FRAGMENTOS DE UN ARCHIVO (PROTEGIDO)
+# ENDPOINT: ELIMINAR TODOS LOS FRAGMENTOS DE UN ARCHIVO (SOLO ADMIN)
 # -------------------------------------------------
 @app.delete("/api/delete-by-filename/")
 async def delete_by_filename(
     filename: str,
-    admin_token: Optional[str] = Header(None, alias="X-Admin-Token"),
-    auth=Depends(require_auth),
+    role: str = Depends(require_admin),
     col=Depends(get_chroma_collection),
 ):
-    """
-    Elimina de la colección todos los fragmentos cuyo metadato
-    'filename' coincida con el valor indicado.
-    Solo permite eliminar si el token de admin es correcto.
-    """
     if not filename:
         raise HTTPException(status_code=400, detail="Debe indicarse un nombre de archivo.")
-
-    # Protección por token
-    if ADMIN_TOKEN and admin_token != ADMIN_TOKEN:
-        raise HTTPException(
-            status_code=403,
-            detail="Token de administrador incorrecto para eliminar archivos.",
-        )
 
     try:
         col.delete(where={"filename": filename})

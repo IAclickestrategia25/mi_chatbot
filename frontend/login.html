@@ -100,6 +100,12 @@
       box-shadow: 0 4px 12px rgba(37, 99, 235, 0.35);
     }
 
+    button:disabled {
+      opacity: 0.7;
+      cursor: wait;
+      box-shadow: none;
+    }
+
     .note {
       margin-top: 10px;
       font-size: 12px;
@@ -118,7 +124,7 @@
 <body>
   <div class="card">
     <h1>Acceso al asistente</h1>
-    <p>Introduce la contraseña facilitada para acceder a tu asistente personal.</p>
+    <p>Introduce la contraseña de usuario o de administrador para acceder a tu asistente personal.</p>
 
     <form id="loginForm" action="/login" method="POST">
       <label for="password">Contraseña</label>
@@ -155,10 +161,14 @@
         const data = await res.json().catch(() => ({}));
 
         if (res.ok && data.ok) {
-          // Contraseña correcta: vamos al asistente
+          // Guardar el rol (admin/user) para usarlo luego en index.html
+          if (data.role) {
+            localStorage.setItem("assistant_role", data.role);
+          } else {
+            localStorage.removeItem("assistant_role");
+          }
           window.location.href = "/";
         } else {
-          // Error devuelto por el backend (ej. contraseña incorrecta)
           errorBox.textContent = data.error || "Error al iniciar sesión.";
         }
       } catch (err) {
