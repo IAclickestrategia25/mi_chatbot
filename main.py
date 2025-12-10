@@ -534,6 +534,7 @@ async def ask_documents(
 ):
     pregunta_original = body.question.strip()
 
+    # ---------- 0. Reescritura de la pregunta para búsqueda ----------
     rewrite_system = (
         "Eres un asistente especializado en generación de consultas de búsqueda.\n"
         "Transforma la pregunta del usuario en una consulta MUY corta y útil para "
@@ -554,6 +555,7 @@ async def ask_documents(
     except Exception:
         consulta_chroma = pregunta_original
 
+    # ---------- 1. Consultar Chroma ----------
     n_candidatos = max(body.n_results, 20)
     try:
         res = col.query(
@@ -573,12 +575,15 @@ async def ask_documents(
         candidatos.append({"doc": doc, "meta": meta, "dist": float(dist)})
 
     if not candidatos:
+        # Sin nada relevante en Chroma
         return {
-            "respuesta": "No he encontrado información relevante sobre esa pregunta en los documentos.",
+            "respuesta": "No he encontrado información relevante en los documentos para responder a esta pregunta.",
+            "fuentes": [],
             "fragmentos_usados": [],
             "distancias": [],
         }
 
+    # ---------- 2. Re-ranqueo con GPT ----------
     indices_buenos = seleccionar_fragmentos_relevantes(
         pregunta=pregunta_original,
         candidatos=candidatos,
@@ -592,6 +597,7 @@ async def ask_documents(
     else:
         buenos = [candidatos[i] for i in indices_buenos]
 
+    # ---------- 3. Construir contexto ----------
     contexto_partes = []
     filtrados = []
     for i, c in enumerate(buenos, start=1):
@@ -606,16 +612,23 @@ async def ask_documents(
 
     contexto = "\n\n".join(contexto_partes)
 
+    # Marcador especial para saber si NO se han usado datos de los documentos
+    MARKER_SIN_DATOS = "[[SIN_DATOS_DOCUMENTOS]]"
+
     system_msg = (
         "Eres un asistente que responde ÚNICAMENTE usando la información "
         "que aparece en los fragmentos de texto proporcionados.\n\n"
         "Instrucciones importantes:\n"
-        "1) Usa siempre los fragmentos como única fuente de verdad.\n"
-        "2) Si la pregunta es genérica, responde resumiendo la "
-        "información relevante de los fragmentos.\n"
-        "3) Si falta un dato concreto, dilo claramente.\n"
-        "4) No añadas conocimientos externos ni inventes nada.\n"
-        "Responde siempre en español neutro."
+        "1) Usa siempre los fragmentos como única fuente de verdad cuando exista información relevante.\n"
+        "2) Si la pregunta es genérica, responde resumiendo la información relevante de los fragmentos.\n"
+        "3) Si los fragmentos NO contienen información útil para responder a la pregunta "
+        "(por ejemplo, saludos como 'hola', preguntas sobre el tiempo actual, etc.), "
+        "puedes responder con un mensaje general indicando que no hay datos en los documentos.\n"
+        f"4) Cuando NO utilices información de los documentos para elaborar tu respuesta, "
+        f"AÑADE al final de la respuesta exactamente este marcador: {MARKER_SIN_DATOS}\n"
+        "   - No añadas texto después del marcador.\n"
+        "   - El marcador sirve para que el sistema sepa que no se han usado fragmentos.\n"
+        "5) Responde siempre en español neutro."
     )
 
     user_msg = (
@@ -626,6 +639,7 @@ async def ask_documents(
         f"{contexto}"
     )
 
+    # ---------- 4. Llamar a OpenAI ----------
     try:
         completion = openai_client.chat.completions.create(
             model="gpt-4.1-mini",
@@ -635,16 +649,31 @@ async def ask_documents(
                 {"role": "user", "content": user_msg},
             ],
         )
-        respuesta = completion.choices[0].message.content.strip()
+        raw_answer = completion.choices[0].message.content.strip()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error llamando a OpenAI: {e}")
 
+    # ---------- 5. Detectar si la respuesta NO usa documentos ----------
+    sin_datos_documentos = MARKER_SIN_DATOS in raw_answer
+    respuesta = raw_answer.replace(MARKER_SIN_DATOS, "").strip()
+
+    if sin_datos_documentos:
+        # No mostramos fuentes ni fragmentos
+        return {
+            "respuesta": respuesta,
+            "fuentes": [],
+            "fragmentos_usados": [],
+            "distancias": [],
+        }
+
+    # ---------- 6. Caso normal: sí ha usado documentos ----------
     return {
         "respuesta": respuesta,
         "fuentes": list({meta.get("filename", "desconocido") for _, meta, _ in filtrados}),
         "fragmentos_usados": [doc for doc, _, _ in filtrados],
         "distancias": [float(dist) for _, _, dist in filtrados],
     }
+
 
 
 # -------------------------------------------------
