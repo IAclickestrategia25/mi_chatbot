@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8" />
-  <title>Acceso al asistente</title>
+  <title>Acceso asistente Uribe Enea</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
     :root {
@@ -12,8 +12,8 @@
       --primary-dark: #1d4ed8;
       --text-main: #111827;
       --text-muted: #6b7280;
-      --radius-lg: 12px;
-      --shadow-soft: 0 12px 30px rgba(15, 23, 42, 0.12);
+      --radius-lg: 14px;
+      --shadow-soft: 0 16px 40px rgba(15, 23, 42, 0.16);
     }
 
     * { box-sizing: border-box; }
@@ -25,30 +25,76 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      background: radial-gradient(circle at top left, #e0e7ff 0, #f4f5fb 40%, #f4f5fb 100%);
+      background: radial-gradient(circle at top left, #dbeafe 0, #f4f5fb 40%, #f4f5fb 100%);
       color: var(--text-main);
+      padding: 16px;
     }
 
     .card {
       background: var(--bg-card);
       border-radius: var(--radius-lg);
       box-shadow: var(--shadow-soft);
-      padding: 24px 26px 22px;
-      max-width: 360px;
+      padding: 26px 28px 22px;
+      max-width: 380px;
       width: 100%;
-      border: 1px solid rgba(148, 163, 184, 0.3);
+      border: 1px solid rgba(148, 163, 184, 0.35);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .card::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(circle at top right, rgba(37, 99, 235, 0.08), transparent 50%);
+      pointer-events: none;
+    }
+
+    .card-inner {
+      position: relative;
+      z-index: 1;
+    }
+
+    .brand-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: #e0ebff;
+      color: #1d4ed8;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 8px;
+    }
+
+    .brand-pill span:last-child {
+      opacity: 0.8;
+      font-weight: 500;
     }
 
     h1 {
-      margin: 0 0 8px;
+      margin: 0 0 6px;
       font-size: 22px;
       font-weight: 700;
     }
 
     p {
-      margin: 0 0 16px;
+      margin: 0 0 18px;
       font-size: 14px;
       color: var(--text-muted);
+    }
+
+    .powered {
+      font-size: 12px;
+      margin-bottom: 16px;
+      color: var(--text-muted);
+    }
+
+    .powered strong {
+      color: #111827;
     }
 
     label {
@@ -87,17 +133,19 @@
       font-weight: 600;
       cursor: pointer;
       box-shadow: 0 6px 18px rgba(37, 99, 235, 0.4);
-      transition: transform 0.1s ease, box-shadow 0.12s ease;
+      transition: transform 0.1s ease, box-shadow 0.12s ease, filter 0.12s ease;
     }
 
-    button:hover {
+    button:hover:not(:disabled) {
       transform: translateY(-1px);
       box-shadow: 0 8px 22px rgba(37, 99, 235, 0.45);
+      filter: brightness(1.03);
     }
 
-    button:active {
+    button:active:not(:disabled) {
       transform: translateY(0);
       box-shadow: 0 4px 12px rgba(37, 99, 235, 0.35);
+      filter: none;
     }
 
     button:disabled {
@@ -113,6 +161,11 @@
       text-align: center;
     }
 
+    .note strong {
+      font-weight: 600;
+      color: #111827;
+    }
+
     .error {
       margin-top: 8px;
       font-size: 13px;
@@ -123,17 +176,29 @@
 </head>
 <body>
   <div class="card">
-    <h1>Acceso al asistente</h1>
+    <div class="card-inner">
+      <div class="brand-pill">
+        <span>URIBE ENEA</span>
+        <span>Asistente documental</span>
+      </div>
 
-    <form id="loginForm" action="/login" method="POST">
-      <label for="password">Contraseña</label>
-      <input id="password" name="password" type="password" required autofocus />
-      <button type="submit">Entrar</button>
-      <div id="loginError" class="error"></div>
-    </form>
+      <h1>Acceso al asistente</h1>
+      <p>Introduce la contraseña facilitada para acceder al asistente privado de Uribe Enea.</p>
 
-    <div class="note">
-      Desarrollado por Click Estrategia.
+      <div class="powered">
+        Desarrollado por <strong>Click Estrategia</strong>.
+      </div>
+
+      <form id="loginForm" action="/login" method="POST">
+        <label for="password">Contraseña</label>
+        <input id="password" name="password" type="password" required autofocus />
+        <button type="submit">Entrar</button>
+        <div id="loginError" class="error"></div>
+      </form>
+
+      <div class="note">
+        El acceso está restringido al equipo de Uribe Enea.
+      </div>
     </div>
   </div>
 
@@ -160,11 +225,9 @@
         const data = await res.json().catch(() => ({}));
 
         if (res.ok && data.ok) {
-          // Guardar el rol (admin/user) para usarlo luego en index.html
+          // Guardamos el rol devuelto por el backend (admin / user)
           if (data.role) {
             localStorage.setItem("assistant_role", data.role);
-          } else {
-            localStorage.removeItem("assistant_role");
           }
           window.location.href = "/";
         } else {

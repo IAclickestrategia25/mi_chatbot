@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8" />
-  <title>Asistente personal</title>
+  <title>Asistente Uribe Enea</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
     :root {
@@ -17,16 +17,14 @@
       --shadow-soft: 0 8px 20px rgba(15, 23, 42, 0.06);
     }
 
-    * {
-      box-sizing: border-box;
-    }
+    * { box-sizing: border-box; }
 
     body {
       margin: 0;
       min-height: 100vh;
       font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       color: var(--text-main);
-      background: radial-gradient(circle at top left, #e0e7ff 0, #f4f5fb 40%, #f4f5fb 100%);
+      background: radial-gradient(circle at top left, #dbeafe 0, #f4f5fb 40%, #f4f5fb 100%);
       padding: 24px 16px;
       display: flex;
       justify-content: center;
@@ -41,12 +39,37 @@
       margin-bottom: 20px;
     }
 
-    /* nuevo: cabecera con botón de modo */
     .header-top {
       display: flex;
       justify-content: space-between;
       align-items: flex-start;
       gap: 12px;
+    }
+
+    .brand-header {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .brand-pill-main {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 12px;
+      border-radius: 999px;
+      background: #e0ebff;
+      color: #1d4ed8;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 6px;
+    }
+
+    .brand-pill-main span:last-child {
+      opacity: 0.85;
+      font-weight: 500;
     }
 
     .title {
@@ -97,8 +120,15 @@
 
     #switchModeBtn:hover:not(:disabled) {
       background: #e5e7eb;
-      transform: none;
-      box-shadow: none;
+    }
+
+    .powered-by {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .powered-by strong {
+      color: #111827;
     }
 
     .layout {
@@ -216,8 +246,6 @@
 
     .file-actions button:hover:not(:disabled) {
       background: #e5e7eb;
-      transform: none;
-      box-shadow: none;
     }
 
     .file-actions button.delete {
@@ -407,7 +435,6 @@
       transition: background 0.12s ease, transform 0.1s ease, box-shadow 0.12s ease;
     }
 
-
     button:hover:not(:disabled) {
       transform: translateY(-1px);
       box-shadow: 0 8px 18px rgba(37, 99, 235, 0.4);
@@ -480,16 +507,23 @@
   <div class="page">
     <header>
       <div class="header-top">
-        <div>
-          <h1 class="title">Asistente personal</h1>
+        <div class="brand-header">
+          <div class="brand-pill-main">
+            <span>URIBE ENEA</span>
+            <span>Asistente documental</span>
+          </div>
+          <h1 class="title">Asistente interno de Uribe Enea</h1>
           <p class="subtitle" id="subtitle">
-            Sube documentos y consulta su contenido de forma conversacional. El índice de conocimiento te permite ver qué archivos están cargados,
-            revisar fragmentos y eliminarlos cuando lo desees.
+            Consulta de forma rápida la información contenida en los documentos internos de Uribe Enea.
+            El asistente responde siempre en base a los archivos que tengáis cargados en el índice.
           </p>
         </div>
         <div class="mode-switch">
           <span id="modeLabel"></span>
           <button id="switchModeBtn" type="button">Cambiar de modo</button>
+          <div class="powered-by">
+            Desarrollado por <strong>Click Estrategia</strong>
+          </div>
         </div>
       </div>
     </header>
@@ -505,15 +539,14 @@
           <div id="index-empty" style="display:none;">
             No hay documentos indexados todavía. Sube uno para empezar.
           </div>
-
           <div id="fileDetails"></div>
         </section>
 
         <section id="uploader" class="card">
           <h2 id="uploader-title">Subir documentos</h2>
           <p>
-            Puedes incorporar PDF, archivos DOCX, CSV e imágenes (PNG/JPG). El contenido se procesa e indexa en Chroma para que
-            el asistente pueda utilizarlo como base de sus respuestas.
+            Puedes incorporar PDF, archivos DOCX, CSV e imágenes (PNG/JPG). El contenido se procesa e indexa en Chroma
+            para que el asistente pueda utilizarlo como base de sus respuestas.
           </p>
           <div id="uploader-controls">
             <input id="fileInput" type="file" multiple
@@ -554,7 +587,7 @@
 
     modeLabelEl.textContent = isAdmin ? "Modo: administrador" : "Modo: usuario";
 
-    // Cambiar de modo: limpiar rol + hacer logout (borra cookie y redirige a /login)
+    // Cambiar de modo: limpiar rol + logout
     switchModeBtn.addEventListener("click", () => {
       localStorage.removeItem("assistant_role");
       window.location.href = "/logout";
@@ -563,8 +596,8 @@
     if (!isAdmin) {
       uploaderSection.style.display = "none";
       subtitle.textContent =
-        "Consulta el contenido de los documentos cargados de forma conversacional. " +
-        "Puedes revisar qué archivos hay en el índice y ver algunos fragmentos de ejemplo.";
+        "Consulta el contenido de los documentos internos de Uribe Enea de forma conversacional. " +
+        "Puedes ver qué archivos hay cargados y revisar algunos fragmentos de ejemplo.";
     }
 
     // Chat
@@ -873,7 +906,7 @@
     }
 
     addMessage(
-      "Hola, soy el asistente. Responderé basándome únicamente en los documentos indexados.",
+      "Hola, soy el asistente interno de Uribe Enea. Responderé basándome únicamente en los documentos que tengáis indexados.",
       "bot"
     );
     loadIndex();
