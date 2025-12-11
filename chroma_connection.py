@@ -1,4 +1,4 @@
-import os
+import os 
 import chromadb
 from chromadb.api import ClientAPI
 from chromadb.api.models.Collection import Collection
@@ -11,10 +11,9 @@ load_dotenv()
 _client: ClientAPI | None = None
 _collection: Collection | None = None
 
-# Embeddings con OpenAI (sin sentence-transformers ni torch)
 _embedder = embedding_functions.OpenAIEmbeddingFunction(
     api_key=os.getenv("OPENAI_API_KEY"),
-    model_name="text-embedding-3-large",  # o "text-embedding-3-small" si prefieres
+    model_name="text-embedding-3-large",
 )
 
 def get_chroma_client() -> ClientAPI:
@@ -32,9 +31,9 @@ def get_chroma_collection(
 ) -> Collection:
     global _collection
     if _collection is None:
+        collection_name = os.getenv("CHROMA_COLLECTION", "mis_documentos_openai")
         _collection = client.get_or_create_collection(
-            name="mis_documentos_openai",
+            name=collection_name,
             embedding_function=_embedder,
         )
-
     return _collection
