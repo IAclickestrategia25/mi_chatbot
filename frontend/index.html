@@ -6,23 +6,32 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
     :root {
-      --bg-page: #050816;
-      --bg-surface: radial-gradient(circle at top left, #111827 0, #020617 55%);
-      --bg-card: rgba(15, 23, 42, 0.96);
-      --bg-card-soft: rgba(15, 23, 42, 0.9);
-      --border-subtle: rgba(148, 163, 184, 0.35);
-      --accent: #38bdf8;
-      --accent-soft: rgba(56, 189, 248, 0.14);
-      --accent-strong: #0ea5e9;
-      --accent-gradient: linear-gradient(135deg, #38bdf8, #6366f1);
-      --text-main: #e5e7eb;
-      --text-muted: #9ca3af;
+      /* Fondo general azul muy claro */
+      --bg-page: #f4f5fb;
+      --bg-surface: radial-gradient(circle at top left, #dbeafe 0, #f4f5fb 45%, #f4f5fb 100%);
+
+      /* Tarjetas / cuadrados en blanco */
+      --bg-card: #ffffff;
+      --bg-card-soft: #ffffff;
+
+      /* Bordes y acentos suaves */
+      --border-subtle: #e1e4ee;
+      --accent: #2563eb;
+      --accent-soft: rgba(37, 99, 235, 0.08);
+      --accent-strong: #1d4ed8;
+      --accent-gradient: linear-gradient(135deg, #2563eb, #4f46e5);
+
+      /* Texto oscuro como en la versión antigua */
+      --text-main: #111827;
+      --text-muted: #6b7280;
+
       --radius-lg: 16px;
       --radius-pill: 999px;
-      --shadow-soft: 0 22px 60px rgba(15, 23, 42, 0.75);
-      --shadow-subtle: 0 16px 40px rgba(15, 23, 42, 0.6);
-      --chip-bg: rgba(15, 23, 42, 0.95);
+      --shadow-soft: 0 22px 60px rgba(15, 23, 42, 0.1);
+      --shadow-subtle: 0 16px 40px rgba(15, 23, 42, 0.06);
+      --chip-bg: #ffffff;
     }
+
 
     * {
       box-sizing: border-box;
@@ -202,7 +211,7 @@
       font-size: 12px;
       font-weight: 500;
       cursor: pointer;
-      box-shadow: 0 10px 25px rgba(15, 23, 42, 0.7);
+      box-shadow: none;
       display: inline-flex;
       align-items: center;
       gap: 6px;
@@ -707,19 +716,19 @@
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      box-shadow: 0 16px 35px rgba(37, 99, 235, 0.7);
+      box-shadow: none;
       transition: background 0.12s ease, transform 0.1s ease, box-shadow 0.12s ease, filter 0.1s ease;
     }
 
     button:hover:not(:disabled) {
       transform: translateY(-1px);
-      box-shadow: 0 18px 40px rgba(37, 99, 235, 0.85);
+      box-shadow: none;
       filter: brightness(1.05);
     }
 
     button:active:not(:disabled) {
       transform: translateY(0);
-      box-shadow: 0 10px 20px rgba(37, 99, 235, 0.7);
+      box-shadow: none;
       filter: none;
     }
 
