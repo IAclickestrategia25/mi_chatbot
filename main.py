@@ -676,6 +676,20 @@ async def ask_documents(
 
 
 
+
+
+@app.get("/api/active-sessions/")
+async def active_sessions():
+
+    return {
+        "count": len(VALID_SESSIONS)
+    }
+
+
+
+
+
+
 # -------------------------------------------------
 # ENDPOINT: RESUMEN DEL ÍNDICE (ARCHIVOS + Nº FRAGMENTOS)
 # -------------------------------------------------

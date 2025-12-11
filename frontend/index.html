@@ -8,7 +8,7 @@
       :root {
         /* Fondo general azul muy claro */
         --bg-page: #f4f5fb;
-        --bg-surface: radial-gradient(circle at top left, #e3eefc 0, #b0b1b6 45%, #f4f5fb 100%);
+        --bg-surface: radial-gradient(circle at top left, #e3eefc 0, #eaeaec 45%, #f0f0f0 100%);
 
         /* Tarjetas / cuadrados en blanco */
         --bg-card: #ffffff;
@@ -171,6 +171,30 @@
         color: var(--text-muted);
         text-align: right;
       }
+
+
+
+      .online-panel {
+        margin-top: 4px;
+        padding: 4px 10px;
+        border-radius: var(--radius-pill);
+        background: #f9fafb;
+        border: 1px solid #e5e7eb;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 11px;
+        color: var(--text-muted);
+      }
+
+      .online-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        background: #22c55e;
+        box-shadow: 0 0 0 4px rgba(34, 197, 94, 0.2);
+      }
+
 
       .mode-row {
         display: flex;
@@ -775,14 +799,22 @@
           <span id="modeLabel"></span>
           <button id="switchModeBtn" type="button">Cambiar de modo</button>
         </div>
+
+        <!-- NUEVO: panel de usuarios conectados -->
+        <div class="online-panel">
+          <span class="online-dot"></span>
+          <span id="onlineText">0 usuarios conectados</span>
+        </div>
+
         <div class="powered-by">
           Desarrollado por <strong>Click Estrategia</strong>
         </div>
         <div class="powered-logo">
           <img src="/static/logo/logo_click.png"
-               alt="Logo Click Estrategia">
+              alt="Logo Click Estrategia">
         </div>
       </div>
+
     </header>
 
     <div class="layout">
@@ -837,6 +869,8 @@
     const INDEX_URL = "/api/index-summary/";
     const FRAGMENTS_URL = "/api/file-fragments/";
     const DELETE_URL = "/api/delete-by-filename/";
+    const ACTIVE_SESSIONS_URL = "/api/active-sessions/";
+
 
     // Rol guardado durante el login (admin/user)
     const userRole = localStorage.getItem("assistant_role") || "user";
@@ -847,6 +881,8 @@
     const switchModeBtn = document.getElementById("switchModeBtn");
     const uploaderSection = document.getElementById("uploader");
     const subtitle = document.getElementById("subtitle");
+    const onlineTextEl = document.getElementById("onlineText");
+
 
     modeLabelEl.textContent = isAdmin ? "Modo: administrador" : "Modo: usuario";
 
@@ -958,6 +994,31 @@
         console.error(err);
         indexEmpty.textContent = "Error de conexión al cargar el índice.";
         indexEmpty.style.display = "block";
+      }
+    }
+    
+
+
+    async function updateOnlineUsers() {
+      if (!onlineTextEl) return;
+
+      try {
+        const res = await fetch(ACTIVE_SESSIONS_URL);
+        if (!res.ok) {
+          onlineTextEl.textContent = "Usuarios conectados: N/D";
+          return;
+        }
+        const data = await res.json();
+        const count = data.count ?? 0;
+
+        if (count === 1) {
+          onlineTextEl.textContent = "1 usuario conectado";
+        } else {
+          onlineTextEl.textContent = `${count} usuarios conectados`;
+        }
+      } catch (err) {
+        console.error(err);
+        onlineTextEl.textContent = "Usuarios conectados: N/D";
       }
     }
 
@@ -1173,6 +1234,8 @@
       "bot"
     );
     loadIndex();
+    updateOnlineUsers();               
+    setInterval(updateOnlineUsers, 15000);
   </script>
 </body>
 </html>
