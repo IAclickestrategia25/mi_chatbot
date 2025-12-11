@@ -398,6 +398,20 @@ def describir_imagen_bytes(data: bytes, filename: str) -> str:
     return resp.choices[0].message.content.strip()
 
 
+
+
+# -------------------------------------------------
+# ENDPOINT: Nº DE SESIONES ACTIVAS (APROX.)
+# -------------------------------------------------
+@app.get("/api/active-sessions/")
+async def active_sessions():
+
+    return {
+        "count": len(VALID_SESSIONS)
+    }
+
+
+
 # -------------------------------------------------
 # ENDPOINT: SUBIR DOCUMENTOS (JSON) A CHROMA (SOLO ADMIN)
 # -------------------------------------------------
