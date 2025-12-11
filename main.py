@@ -5,6 +5,7 @@ import mimetypes
 from io import BytesIO, StringIO
 from typing import List, Dict, Any, Optional
 import hashlib
+import json
 
 import csv
 import fitz          # PyMuPDF para PDF
@@ -34,6 +35,10 @@ from chroma_connection import get_chroma_collection
 # -------------------------------------------------
 load_dotenv()
 openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+#RECUPERACION DE ARCHIVOS
+BACKUP_DIR = "backups"
+os.makedirs(BACKUP_DIR, exist_ok=True)
 
 # Contraseñas de acceso
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
@@ -334,6 +339,27 @@ def trocear_texto(texto: str, max_chars: int = 800) -> List[str]:
 
 
 # -------------------------------------------------
+# BACKUP COMPLETO DE LA COLECCIÓN DE CHROMA
+# -------------------------------------------------
+def backup_chroma_collection(col):
+    """
+    Exporta todo el contenido de la colección a un archivo JSON.
+    Se llama después de indexar nuevos documentos.
+    """
+    try:
+        data = col.get(include=["embeddings", "documents", "metadatas", "ids"])
+        timestamp = datetime.utcnow().strftime("%Y-%m-%dT%H-%M-%S")
+        filename = os.path.join(BACKUP_DIR, f"backup_{timestamp}.json")
+
+        with open(filename, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+
+        print(f"📦 Backup creado: {filename}")
+    except Exception as e:
+        print(f"❌ Error creando backup: {e}")
+
+
+# -------------------------------------------------
 # LECTURA DE PDF, DOCX, CSV
 # -------------------------------------------------
 def leer_pdf_bytes(data: bytes) -> str:
@@ -529,7 +555,7 @@ async def upload_files(
             "total_archivos": 0,
             "total_fragmentos": 0,
         }
-
+    backup_chroma_collection(col)
     return {
         "message": "Archivos procesados e indexados correctamente.",
         "total_archivos": total_archivos,
@@ -537,6 +563,8 @@ async def upload_files(
     }
 
 
+    
+    
 # -------------------------------------------------
 # ENDPOINT: HACER PREGUNTAS A TUS DOCUMENTOS (ADMIN Y USUARIO)
 # -------------------------------------------------
