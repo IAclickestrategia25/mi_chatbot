@@ -10,13 +10,18 @@
       --bg-card: #ffffff;
       --primary: #2563eb;
       --primary-dark: #1d4ed8;
-      --text-main: #111827;
+      --text-main: #0f172a;
       --text-muted: #6b7280;
-      --radius-lg: 14px;
-      --shadow-soft: 0 16px 40px rgba(15, 23, 42, 0.16);
+      --radius-lg: 20px;
+      --shadow-soft: 0 18px 45px rgba(15, 23, 42, 0.18);
+      --border-subtle: rgba(148, 163, 184, 0.35);
+      --danger: #dc2626;
+      --danger-soft: #fef2f2;
     }
 
-    * { box-sizing: border-box; }
+    * {
+      box-sizing: border-box;
+    }
 
     body {
       margin: 0;
@@ -34,10 +39,10 @@
       background: var(--bg-card);
       border-radius: var(--radius-lg);
       box-shadow: var(--shadow-soft);
-      padding: 26px 28px 22px;
-      max-width: 380px;
+      padding: 32px 34px 26px;
+      max-width: 420px;
       width: 100%;
-      border: 1px solid rgba(148, 163, 184, 0.35);
+      border: 1px solid var(--border-subtle);
       position: relative;
       overflow: hidden;
     }
@@ -46,8 +51,11 @@
       content: "";
       position: absolute;
       inset: 0;
-      background: radial-gradient(circle at top right, rgba(37, 99, 235, 0.08), transparent 50%);
+      background:
+        radial-gradient(circle at top right, rgba(37, 99, 235, 0.14), transparent 55%),
+        radial-gradient(circle at bottom left, rgba(129, 140, 248, 0.08), transparent 55%);
       pointer-events: none;
+      opacity: 0.85;
     }
 
     .card-inner {
@@ -59,7 +67,7 @@
       display: inline-flex;
       align-items: center;
       gap: 8px;
-      padding: 4px 10px;
+      padding: 4px 12px;
       border-radius: 999px;
       background: #e0ebff;
       color: #1d4ed8;
@@ -67,84 +75,140 @@
       font-weight: 600;
       text-transform: uppercase;
       letter-spacing: 0.08em;
-      margin-bottom: 8px;
+      margin-bottom: 10px;
     }
 
     .brand-pill span:last-child {
-      opacity: 0.8;
+      opacity: 0.85;
       font-weight: 500;
     }
 
+    .logo-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .logo-row-left {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
     h1 {
-      margin: 0 0 6px;
+      margin: 0;
       font-size: 22px;
       font-weight: 700;
+      letter-spacing: 0.01em;
+      color: #0f172a;
+    }
+
+    .env-pill {
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: #dcfce7;
+      color: #15803d;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      border: 1px solid #bbf7d0;
     }
 
     p {
-      margin: 0 0 18px;
+      margin: 8px 0 18px;
       font-size: 14px;
       color: var(--text-muted);
     }
 
     .powered {
       font-size: 12px;
-      margin-bottom: 16px;
+      margin-bottom: 20px;
       color: var(--text-muted);
     }
 
     .powered strong {
       color: #111827;
+      font-weight: 600;
+    }
+
+    .logo-small {
+      height: 32px;
+      opacity: 0.96;
     }
 
     label {
       display: block;
       font-size: 13px;
-      margin-bottom: 4px;
+      margin-bottom: 6px;
       font-weight: 500;
+    }
+
+    .input-wrapper {
+      position: relative;
+    }
+
+    .input-icon {
+      position: absolute;
+      left: 12px;
+      top: 50%;
+      transform: translateY(-50%);
+      font-size: 16px;
+      opacity: 0.55;
+      pointer-events: none;
     }
 
     input[type="password"] {
       width: 100%;
-      padding: 10px 12px;
+      padding: 11px 14px 11px 38px;
       border-radius: 999px;
       border: 1px solid #cbd5e1;
       font-size: 14px;
       outline: none;
       background-color: #f9fafb;
-      transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
+      transition:
+        border-color 0.15s ease,
+        box-shadow 0.15s ease,
+        background-color 0.15s ease,
+        transform 0.06s ease;
     }
 
     input[type="password"]:focus {
       border-color: var(--primary);
       background-color: #ffffff;
       box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.18);
+      transform: translateY(-0.5px);
     }
 
     button {
-      margin-top: 14px;
+      margin-top: 16px;
       width: 100%;
-      padding: 10px 18px;
+      padding: 11px 18px;
       border-radius: 999px;
       border: none;
       background: linear-gradient(135deg, var(--primary), var(--primary-dark));
       color: #fff;
-      font-size: 14px;
+      font-size: 15px;
       font-weight: 600;
       cursor: pointer;
-      box-shadow: 0 6px 18px rgba(37, 99, 235, 0.4);
-      transition: transform 0.1s ease, box-shadow 0.12s ease, filter 0.12s ease;
+      box-shadow: 0 8px 22px rgba(37, 99, 235, 0.35);
+      transition:
+        transform 0.1s ease,
+        box-shadow 0.12s ease,
+        filter 0.12s ease;
     }
 
     button:hover:not(:disabled) {
       transform: translateY(-1px);
-      box-shadow: 0 8px 22px rgba(37, 99, 235, 0.45);
+      box-shadow: 0 10px 26px rgba(37, 99, 235, 0.4);
       filter: brightness(1.03);
     }
 
     button:active:not(:disabled) {
       transform: translateY(0);
-      box-shadow: 0 4px 12px rgba(37, 99, 235, 0.35);
+      box-shadow: 0 5px 14px rgba(37, 99, 235, 0.32);
       filter: none;
     }
 
@@ -155,7 +219,7 @@
     }
 
     .note {
-      margin-top: 10px;
+      margin-top: 14px;
       font-size: 12px;
       color: var(--text-muted);
       text-align: center;
@@ -167,10 +231,26 @@
     }
 
     .error {
-      margin-top: 8px;
+      margin-top: 10px;
       font-size: 13px;
-      color: #b91c1c;
+      color: var(--danger);
       min-height: 16px;
+      background: var(--danger-soft);
+      border-radius: 10px;
+      padding: 6px 10px;
+      border: 1px solid rgba(248, 113, 113, 0.6);
+    }
+
+    .error:empty {
+      padding: 0;
+      border: none;
+      background: transparent;
+    }
+
+    @media (max-width: 480px) {
+      .card {
+        padding: 26px 20px 22px;
+      }
     }
   </style>
 </head>
@@ -179,11 +259,19 @@
     <div class="card-inner">
       <div class="brand-pill">
         <span>CLICK ESTRATEGIA</span>
-        <span>Asistente documental</span>
+        <span>ASISTENTE DOCUMENTAL</span>
       </div>
 
-      <h1>Acceso al asistente</h1>
-      <p>Introduce la contraseña facilitada para acceder al asistente privado de  Click Estrategia.</p>
+      <div class="logo-row">
+        <div class="logo-row-left">
+          <h1>Acceso al asistente</h1>
+          <span class="env-pill">Entorno privado</span>
+        </div>
+        <!-- Si quieres mostrar el logo, cambia la ruta -->
+        <img src="/static/logo/logo_click.png" alt="Click Estrategia" class="logo-small" />
+      </div>
+
+      <p>Introduce la contraseña facilitada para acceder al asistente privado de Click Estrategia.</p>
 
       <div class="powered">
         Desarrollado por <strong>Click Estrategia</strong>.
@@ -191,13 +279,17 @@
 
       <form id="loginForm" action="/login" method="POST">
         <label for="password">Contraseña</label>
-        <input id="password" name="password" type="password" required autofocus />
-        <button type="submit">Entrar</button>
+        <div class="input-wrapper">
+          <span class="input-icon">🔒</span>
+          <input id="password" name="password" type="password" required autofocus />
+        </div>
+
+        <button type="submit" id="loginButton">Entrar</button>
         <div id="loginError" class="error"></div>
       </form>
 
       <div class="note">
-        El acceso está restringido al equipo de Click Estrategia.
+        El acceso está restringido al equipo de <strong>Click Estrategia</strong>.
       </div>
     </div>
   </div>
@@ -206,12 +298,14 @@
     const form = document.getElementById("loginForm");
     const passwordInput = document.getElementById("password");
     const errorBox = document.getElementById("loginError");
-    const button = form.querySelector("button");
+    const button = document.getElementById("loginButton");
 
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
       errorBox.textContent = "";
+      const originalText = button.textContent;
       button.disabled = true;
+      button.textContent = "Accediendo...";
 
       const formData = new FormData();
       formData.append("password", passwordInput.value);
@@ -238,6 +332,7 @@
         errorBox.textContent = "Error de conexión con el servidor.";
       } finally {
         button.disabled = false;
+        button.textContent = originalText;
       }
     });
   </script>
