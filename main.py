@@ -653,14 +653,16 @@ async def ask_documents(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error llamando a OpenAI: {e}")
 
-    # ---------- 5. Detectar si la respuesta NO usa documentos ----------
-    sin_datos_documentos = MARKER_SIN_DATOS in raw_answer
-    respuesta = raw_answer.replace(MARKER_SIN_DATOS, "").strip()
+    # ---------- 5. Si el modelo dice "No consta...", NO devolver fuentes ----------
+    respuesta = (raw_answer or "").strip()
 
-    if sin_datos_documentos:
-        # No mostramos fuentes ni fragmentos
+    def es_no_consta(text: str) -> bool:
+        t = (text or "").strip().rstrip(".").lower()
+        return t == "no consta en los documentos proporcionados".rstrip(".").lower()
+
+    if es_no_consta(respuesta):
         return {
-            "respuesta": respuesta,
+            "respuesta": "No consta en los documentos proporcionados.",
             "fuentes": [],
             "fragmentos_usados": [],
             "distancias": [],
@@ -673,6 +675,7 @@ async def ask_documents(
         "fragmentos_usados": [doc for doc, _, _ in filtrados],
         "distancias": [float(dist) for _, _, dist in filtrados],
     }
+
 
 
 
