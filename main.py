@@ -1,5 +1,6 @@
 # main.py
 import os
+import re
 import base64
 import mimetypes
 import hashlib
@@ -59,6 +60,9 @@ MAX_CONTEXT_FRAGMENTS_DEFAULT = 3
 MAX_CONTEXT_CHARS_BACKEND = 6000
 FALLBACK_TOPK_IF_EMPTY = 10
 
+# Respuesta “sin datos”
+NO_DATA_PHRASE = "No consta en los documentos proporcionados."
+
 
 # -------------------------------------------------
 # APP FASTAPI + CORS + STATIC
@@ -91,6 +95,25 @@ def suggested_k(question: str) -> int:
     if q.startswith(("qué es", "que es", "define", "definición", "definicion")):
         return 2
     return MAX_CONTEXT_FRAGMENTS_DEFAULT
+
+
+def clean_llm_answer(text: str) -> str:
+    """
+    Elimina cualquier etiqueta tipo [F1], [F2]... y normaliza espacios.
+    """
+    t = (text or "").strip()
+    t = re.sub(r"\[F\d+\]", "", t)       # quita [F1], [F2], ...
+    t = re.sub(r"\s+", " ", t).strip()  # normaliza espacios
+    return t
+
+
+def is_no_data_answer(text: str) -> bool:
+    """
+    Considera equivalente con o sin punto final y mayúsculas/minúsculas.
+    """
+    a = (text or "").strip().rstrip(".").lower()
+    b = NO_DATA_PHRASE.strip().rstrip(".").lower()
+    return a == b
 
 
 # -------------------------------------------------
@@ -185,7 +208,6 @@ async def do_login(request: Request):
         if data["count"] >= MAX_ATTEMPTS:
             data["until"] = now + timedelta(minutes=BLOCK_TIME_MINUTES)
         FAILED_ATTEMPTS[device_key] = data
-
         return JSONResponse({"ok": False, "error": "Contraseña incorrecta"}, status_code=401)
 
     if device_key in FAILED_ATTEMPTS:
@@ -366,7 +388,6 @@ def seleccionar_fragmentos_relevantes(
             if 0 <= idx < len(candidatos):
                 indices.append(idx)
 
-    # únicos preservando orden
     out: List[int] = []
     for i in indices:
         if i not in out:
@@ -501,7 +522,7 @@ async def ask_documents(
     if not pregunta_original:
         raise HTTPException(status_code=400, detail="La pregunta no puede estar vacía.")
 
-    # 0) Reescritura de consulta
+    # 0) Reescritura de consulta (solo para búsqueda)
     rewrite_system = (
         "Eres un asistente especializado en generar consultas de búsqueda.\n"
         "Convierte la pregunta en una consulta corta y efectiva.\n"
@@ -541,12 +562,7 @@ async def ask_documents(
         candidatos.append({"doc": doc, "meta": meta, "dist": float(dist)})
 
     if not candidatos:
-        return {
-            "respuesta": "No he encontrado información relevante en los documentos para responder a esta pregunta.",
-            "fuentes": [],
-            "fragmentos_usados": [],
-            "distancias": [],
-        }
+        return {"respuesta": NO_DATA_PHRASE, "fuentes": [], "fragmentos_usados": [], "distancias": []}
 
     # 1.1) Filtrar por threshold con fallback
     thr = float(body.distance_threshold)
@@ -558,12 +574,7 @@ async def ask_documents(
         candidatos_use = candidatos_sorted[:FALLBACK_TOPK_IF_EMPTY]
 
     if not candidatos_use:
-        return {
-            "respuesta": "No he encontrado información suficientemente relevante en los documentos para responder a esta pregunta.",
-            "fuentes": [],
-            "fragmentos_usados": [],
-            "distancias": [],
-        }
+        return {"respuesta": NO_DATA_PHRASE, "fuentes": [], "fragmentos_usados": [], "distancias": []}
 
     # 1.2) Pool para rerank
     rerank_pool = candidatos_use[:MAX_RERANK_POOL]
@@ -576,11 +587,11 @@ async def ask_documents(
     else:
         buenos = [rerank_pool[i] for i in idxs][:k]
 
-    # 3) Construir contexto con etiquetas F1..Fn (para citas)
+    # 3) Construir contexto SIN etiquetas [F1] (para evitar que se copien)
     contexto_partes: List[str] = []
     filtrados: List[Dict[str, Any]] = []
 
-    for i, c in enumerate(buenos, start=1):
+    for c in buenos:
         doc_txt = normalize_ws(c.get("doc", "") or "")
         meta = c.get("meta") or {}
         dist = float(c.get("dist", 0.0) or 0.0)
@@ -589,7 +600,7 @@ async def ask_documents(
         filtrados.append({"doc": doc_txt, "meta": meta, "dist": dist})
 
         contexto_partes.append(
-            f"[F{i} | archivo: {filename} | distancia: {dist:.3f}]\n{doc_txt}\n"
+            f"[archivo: {filename} | distancia: {dist:.3f}]\n{doc_txt}\n"
         )
 
     contexto = "\n\n".join(contexto_partes).strip()
@@ -598,14 +609,11 @@ async def ask_documents(
 
     system_msg = (
         "Eres un asistente RAG.\n"
-        "Regla principal: responde SOLO con información explícita en los fragmentos.\n\n"
-        "Formato obligatorio:\n"
-        "1) Respuesta directa (1-2 frases).\n"
-        "2) Si amplías, cada frase debe terminar con una cita: [F1], [F2], etc.\n\n"
+        "Responde SOLO con información explícita en los fragmentos.\n\n"
         "Reglas:\n"
+        f"- Si la respuesta no está en los fragmentos, di exactamente: \"{NO_DATA_PHRASE}\" y no añadas nada más.\n"
         "- NO inventes ni completes con suposiciones.\n"
-        "- Si la respuesta no está en los fragmentos, di exactamente: "
-        "\"No consta en los documentos proporcionados.\" y no añadas nada más.\n"
+        "- PROHIBIDO incluir etiquetas de cita en la respuesta (por ejemplo: [F1], [F2], etc.).\n"
         "- No uses conocimiento externo.\n"
         "- Español neutro.\n"
     )
@@ -627,11 +635,16 @@ async def ask_documents(
                 {"role": "user", "content": user_msg},
             ],
         )
-        respuesta = (completion.choices[0].message.content or "").strip()
+        respuesta_raw = (completion.choices[0].message.content or "").strip()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error llamando a OpenAI: {e}")
 
-    # 5) Fuentes deterministas (no dependen del texto del modelo)
+    # 5) Limpieza de salida + política “sin fuentes si no hay respuesta”
+    respuesta = clean_llm_answer(respuesta_raw)
+    if is_no_data_answer(respuesta):
+        return {"respuesta": NO_DATA_PHRASE, "fuentes": [], "fragmentos_usados": [], "distancias": []}
+
+    # 6) Fuentes deterministas (no dependen del texto del modelo)
     fuentes = list({(f["meta"] or {}).get("filename", "desconocido") for f in filtrados})
     fragmentos_usados = [f["doc"] for f in filtrados]
     distancias = [float(f["dist"]) for f in filtrados]
