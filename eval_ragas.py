@@ -21,6 +21,8 @@ PASSWORD = os.getenv("CHATBOT_PASSWORD", "PON_AQUI_TU_PASSWORD")
 QUESTIONS = [
     "Como funciona el sistema de automatizacion",
     "Que es una guia de cooperativistas",
+    "puedo hacer lo que quiera en una cooperativa"
+    "las automatizaciones sirven para cualquier cosa"
 ]
 
 # Parámetros del endpoint (mismos por defecto que tu backend)
