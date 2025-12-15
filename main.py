@@ -616,20 +616,20 @@ async def ask_documents(
     MARKER_SIN_DATOS = "[[SIN_DATOS_DOCUMENTOS]]"
 
     system_msg = (
-        "Eres un asistente que responde ÚNICAMENTE usando la información "
-        "que aparece en los fragmentos de texto proporcionados.\n\n"
-        "Instrucciones importantes:\n"
-        "1) Usa siempre los fragmentos como única fuente de verdad cuando exista información relevante.\n"
-        "2) Si la pregunta es genérica, responde resumiendo la información relevante de los fragmentos.\n"
-        "3) Si los fragmentos NO contienen información útil para responder a la pregunta "
-        "(por ejemplo, saludos como 'hola', preguntas sobre el tiempo actual, etc.), "
-        "puedes responder con un mensaje general indicando que no hay datos en los documentos.\n"
-        f"4) Cuando NO utilices información de los documentos para elaborar tu respuesta, "
-        f"AÑADE al final de la respuesta exactamente este marcador: {MARKER_SIN_DATOS}\n"
-        "   - No añadas texto después del marcador.\n"
-        "   - El marcador sirve para que el sistema sepa que no se han usado fragmentos.\n"
-        "5) Responde siempre en español neutro."
+        "Eres un asistente RAG extremadamente estricto.\n"
+        "Responde ÚNICAMENTE con información que aparezca de forma explícita "
+        "en los fragmentos proporcionados.\n\n"
+        "Reglas obligatorias:\n"
+        "1) NO resumas ni interpretes más allá de lo literalmente indicado en los fragmentos.\n"
+        "2) NO añadas conclusiones, beneficios implícitos ni valoraciones.\n"
+        "3) Si una afirmación no aparece claramente en los fragmentos, NO la incluyas.\n"
+        "4) Si los fragmentos no contienen información suficiente para responder, "
+        "responde EXACTAMENTE: \"No consta en los documentos proporcionados.\".\n"
+        "5) No utilices conocimiento externo.\n"
+        "6) No menciones fragmentos, índices ni fuentes en el texto.\n"
+        "7) Español neutro, tono informativo y directo."
     )
+
 
     user_msg = (
         f"Pregunta original del usuario:\n{pregunta_original}\n\n"

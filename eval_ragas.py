@@ -20,11 +20,12 @@ ASK_URL = f"{BASE_URL}/api/ask/"
 PASSWORD = os.getenv("CHATBOT_PASSWORD", "")
 
 QUESTIONS = [
-    "Como funciona el sistema de automatizacion",
-    "Que es una guia de cooperativistas",
-    "puedo hacer lo que quiera en una cooperativa",
-    "las automatizaciones sirven para cualquier cosa",
+    "Como funciona el sistema automatizado de publicación descrito",
+    "Que es una cooperativa de viviendas según la guía",
+    "Qué obligaciones tienen los socios de una cooperativa",
+    "Qué funciones realiza el sistema automatizado descrito"
 ]
+
 
 # Parámetros del endpoint
 N_RESULTS = 15
