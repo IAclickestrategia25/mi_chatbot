@@ -1133,16 +1133,13 @@
           const data = await res.json();
           addMessage(data.respuesta || "No se ha recibido contenido de respuesta.", "bot");
 
-          const fuentes = Array.isArray(data.fuentes) ? data.fuentes : [];
-          const listaFuentes = fuentes.length
-            ? fuentes.map(f => "• " + f).join("<br>")
-            : "No se han identificado fuentes documentales relevantes.";
-
-          addMessage(
-            `<small><strong>Fuentes utilizadas:</strong><br>${listaFuentes}</small>`,
-            "bot"
-          );
-
+          if (data.fuentes && data.fuentes.length > 0) {
+            const listaFuentes = data.fuentes.map(f => "• " + f).join("<br>");
+            addMessage(
+              `<small><strong>Fuentes utilizadas:</strong><br>${listaFuentes}</small>`,
+              "bot"
+            );
+          }
         }
 
       } catch (err) {
