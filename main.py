@@ -5,11 +5,9 @@ import mimetypes
 from io import BytesIO, StringIO
 from typing import List, Dict, Any, Optional
 import hashlib
-import json
-
 import csv
-import fitz          # PyMuPDF para PDF
-import docx          # python-docx para DOCX
+import fitz  # PyMuPDF para PDF
+import docx  # python-docx para DOCX
 from dotenv import load_dotenv
 from openai import OpenAI
 
@@ -50,6 +48,11 @@ FAILED_ATTEMPTS: Dict[str, Dict[str, Any]] = {}  # { "device_key": {"count": X, 
 MAX_ATTEMPTS = 5
 BLOCK_TIME_MINUTES = 5
 
+# Límites para evitar prompts enormes / timeouts
+MAX_RERANK_POOL = 20              # nº máximo de candidatos que pasamos al re-ranker
+MAX_CONTEXT_FRAGMENTS = 3         # nº máximo de fragmentos que usamos para responder
+MAX_CONTEXT_CHARS_BACKEND = 6000  # recorte del contexto total antes de llamar al LLM
+
 
 # -------------------------------------------------
 # APP FASTAPI + CORS + STATIC
@@ -58,7 +61,7 @@ app = FastAPI(title="ChromaDB FastAPI Integration")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # si es entorno privado, considera restringirlo
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -71,17 +74,12 @@ app.mount("/static", StaticFiles(directory="frontend"), name="static")
 # AUTENTICACIÓN Y ROLES
 # -------------------------------------------------
 def generate_session_token() -> str:
-    """
-    Genera un token de sesión irrepetible.
-    No depende de la contraseña para evitar patrones.
-    """
+    """Genera un token de sesión irrepetible."""
     return hashlib.sha256(os.urandom(32)).hexdigest()
 
 
 def get_session_role(request: Request) -> Optional[str]:
-    """
-    Devuelve el rol asociado al token de la cookie, o None si no es válido.
-    """
+    """Devuelve el rol asociado al token de la cookie, o None si no es válido."""
     cookie_val = request.cookies.get(AUTH_COOKIE_NAME)
     if not cookie_val:
         return None
@@ -89,10 +87,7 @@ def get_session_role(request: Request) -> Optional[str]:
 
 
 def require_auth(request: Request) -> str:
-    """
-    Dependencia general: requiere estar logueado.
-    Devuelve el rol ("admin" o "user").
-    """
+    """Requiere estar logueado. Devuelve el rol ("admin" o "user")."""
     role = get_session_role(request)
     if not role:
         raise HTTPException(status_code=401, detail="No autorizado")
@@ -100,9 +95,7 @@ def require_auth(request: Request) -> str:
 
 
 def require_admin(request: Request) -> str:
-    """
-    Dependencia para endpoints solo de administrador.
-    """
+    """Requiere rol admin."""
     role = require_auth(request)
     if role != "admin":
         raise HTTPException(status_code=403, detail="Solo disponible para administradores")
@@ -114,7 +107,6 @@ def require_admin(request: Request) -> str:
 # -------------------------------------------------
 @app.get("/")
 async def serve_frontend(request: Request):
-    # Si no está autenticado, lo mandamos al login
     if not get_session_role(request):
         return RedirectResponse(url="/login", status_code=302)
     return FileResponse("frontend/index.html")
@@ -122,7 +114,6 @@ async def serve_frontend(request: Request):
 
 @app.get("/login")
 async def login_page(request: Request):
-    # Si ya está autenticado, lo mandamos directamente al asistente
     if get_session_role(request):
         return RedirectResponse(url="/", status_code=302)
     return FileResponse("frontend/login.html")
@@ -131,21 +122,18 @@ async def login_page(request: Request):
 @app.post("/login")
 async def do_login(request: Request):
     """
-    Recibe el formulario de login (campo 'password') y, si es correcto,
-    crea una cookie de sesión y responde en JSON.
-    El frontend se encarga de redirigir o mostrar el error.
+    Recibe password, crea cookie de sesión y responde JSON.
     """
     form = await request.form()
     password = form.get("password", "")
 
-    # Identificador de dispositivo: IP + user-agent
     client_ip = request.client.host if request.client else "unknown"
     user_agent = request.headers.get("user-agent", "unknown")
     device_key = f"{client_ip}|{user_agent[:80]}"
 
     now = datetime.utcnow()
 
-    # 1) Comprobar si el dispositivo está bloqueado
+    # 1) Bloqueo por intentos
     block_info = FAILED_ATTEMPTS.get(device_key)
     if block_info and block_info.get("until") and block_info["until"] > now:
         remaining_seconds = int((block_info["until"] - now).total_seconds())
@@ -154,14 +142,13 @@ async def do_login(request: Request):
             {
                 "ok": False,
                 "error": (
-                    f"Demasiados intentos fallidos en este dispositivo. "
+                    "Demasiados intentos fallidos en este dispositivo. "
                     f"Inténtalo de nuevo en {remaining_minutes} minuto(s)."
                 ),
             },
             status_code=429,
         )
     elif block_info and block_info.get("until") and block_info["until"] <= now:
-        # Bloqueo expirado -> limpiamos
         del FAILED_ATTEMPTS[device_key]
 
     if not ADMIN_PASSWORD and not USER_PASSWORD:
@@ -170,47 +157,43 @@ async def do_login(request: Request):
             status_code=500,
         )
 
-    # 2) Determinar rol según la contraseña introducida
+    # 2) Determinar rol
     role: Optional[str] = None
     if ADMIN_PASSWORD and password == ADMIN_PASSWORD:
         role = "admin"
     elif USER_PASSWORD and password == USER_PASSWORD:
         role = "user"
 
-    # 3) Contraseña incorrecta -> registrar intento
+    # 3) Password incorrecta
     if role is None:
         data = FAILED_ATTEMPTS.get(device_key, {"count": 0, "until": None})
         data["count"] += 1
-
-        # Si se supera el límite, se bloquea durante X minutos
         if data["count"] >= MAX_ATTEMPTS:
             data["until"] = now + timedelta(minutes=BLOCK_TIME_MINUTES)
         FAILED_ATTEMPTS[device_key] = data
+        return JSONResponse({"ok": False, "error": "Contraseña incorrecta"}, status_code=401)
 
-        return JSONResponse(
-            {"ok": False, "error": "Contraseña incorrecta"},
-            status_code=401,
-        )
-
-    # 4) Login correcto -> limpiar intentos fallidos de este dispositivo
+    # 4) Login correcto
     if device_key in FAILED_ATTEMPTS:
         del FAILED_ATTEMPTS[device_key]
 
-    # 5) Generar token de sesión y guardarlo con el rol
     token = generate_session_token()
     VALID_SESSIONS[token] = role
 
     response = JSONResponse({"ok": True, "role": role})
+
+    # Secure condicional: en Render será https; en local no.
+    is_https = request.url.scheme == "https"
+
     response.set_cookie(
         AUTH_COOKIE_NAME,
         token,
-        httponly=True,          # JS no puede leerla
-        secure=True,            # en Render va sobre HTTPS
-        samesite="Strict",      # previene CSRF
-        max_age=60 * 60 * 12,   # 12h de sesión
+        httponly=True,
+        secure=is_https,
+        samesite="Strict",
+        max_age=60 * 60 * 12,
         path="/",
     )
-
     return response
 
 
@@ -251,8 +234,11 @@ class FileIndexItem(BaseModel):
 def seleccionar_fragmentos_relevantes(
     pregunta: str,
     candidatos: List[Dict[str, Any]],
-    max_frag: int = 6
+    max_frag: int = 3
 ) -> List[int]:
+    """
+    Re-ranquea candidatos con LLM devolviendo índices (máx. max_frag).
+    """
     if not candidatos:
         return []
 
@@ -269,8 +255,7 @@ def seleccionar_fragmentos_relevantes(
 
     system_msg = (
         "Eres un asistente que actúa como motor de re-ranqueo de documentos.\n"
-        "Tu tarea es elegir qué fragmentos de texto son MÁS ÚTILES para "
-        "responder a la pregunta del usuario.\n\n"
+        "Tu tarea es elegir qué fragmentos de texto son MÁS ÚTILES para responder.\n\n"
         "Instrucciones:\n"
         " - Devuelve SOLO una lista de índices separados por comas (por ejemplo: 0,2,5).\n"
         " - No expliques nada, no añadas texto adicional.\n"
@@ -281,8 +266,7 @@ def seleccionar_fragmentos_relevantes(
         f"Pregunta del usuario:\n{pregunta}\n\n"
         "Estos son los fragmentos candidatos:\n\n"
         f"{texto_fragmentos}\n\n"
-        f"Indica los índices de los fragmentos más relevantes (máx. {max_frag}) "
-        "para responder a la pregunta."
+        f"Indica los índices de los fragmentos más relevantes (máx. {max_frag})."
     )
 
     try:
@@ -306,10 +290,12 @@ def seleccionar_fragmentos_relevantes(
             if 0 <= i < len(candidatos):
                 indices.append(i)
 
+    # únicos manteniendo orden
     indices_unicos: List[int] = []
     for i in indices:
         if i not in indices_unicos:
             indices_unicos.append(i)
+
     return indices_unicos[:max_frag]
 
 
@@ -399,18 +385,12 @@ def describir_imagen_bytes(data: bytes, filename: str) -> str:
     return resp.choices[0].message.content.strip()
 
 
-
-
 # -------------------------------------------------
 # ENDPOINT: Nº DE SESIONES ACTIVAS (APROX.)
 # -------------------------------------------------
 @app.get("/api/active-sessions/")
 async def active_sessions():
-
-    return {
-        "count": len(VALID_SESSIONS)
-    }
-
+    return {"count": len(VALID_SESSIONS)}
 
 
 # -------------------------------------------------
@@ -423,11 +403,7 @@ async def add_documents(
     col=Depends(get_chroma_collection),
 ):
     try:
-        col.add(
-            ids=body.ids,
-            documents=body.documents,
-            metadatas=body.metadatas,
-        )
+        col.add(ids=body.ids, documents=body.documents, metadatas=body.metadatas)
         return {"message": "Documents added successfully", "ids": body.ids}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -452,7 +428,6 @@ async def upload_files(
     for file in files:
         filename = file.filename
         ext = (filename or "").lower().split(".")[-1]
-
         data = await file.read()
 
         try:
@@ -489,13 +464,7 @@ async def upload_files(
             doc_id = f"{filename}_{i}"
             batch_ids.append(doc_id)
             batch_docs.append(frag)
-            batch_metas.append(
-                {
-                    "filename": filename,
-                    "chunk": i,
-                    "tipo": tipo,
-                }
-            )
+            batch_metas.append({"filename": filename, "chunk": i, "tipo": tipo})
 
             if len(batch_ids) >= BATCH_SIZE:
                 try:
@@ -530,6 +499,7 @@ async def upload_files(
             "total_archivos": 0,
             "total_fragmentos": 0,
         }
+
     return {
         "message": "Archivos procesados e indexados correctamente.",
         "total_archivos": total_archivos,
@@ -537,8 +507,6 @@ async def upload_files(
     }
 
 
-    
-    
 # -------------------------------------------------
 # ENDPOINT: HACER PREGUNTAS A TUS DOCUMENTOS (ADMIN Y USUARIO)
 # -------------------------------------------------
@@ -572,7 +540,7 @@ async def ask_documents(
         consulta_chroma = pregunta_original
 
     # ---------- 1. Consultar Chroma ----------
-    n_candidatos = max(body.n_results, 20)
+    n_candidatos = max(int(body.n_results), 20)
     try:
         res = col.query(
             query_texts=[consulta_chroma],
@@ -591,7 +559,6 @@ async def ask_documents(
         candidatos.append({"doc": doc, "meta": meta, "dist": float(dist)})
 
     if not candidatos:
-        # Sin nada relevante en Chroma
         return {
             "respuesta": "No he encontrado información relevante en los documentos para responder a esta pregunta.",
             "fuentes": [],
@@ -599,19 +566,33 @@ async def ask_documents(
             "distancias": [],
         }
 
+    # ---------- 1.1 Filtrar por umbral de distancia (ANTES del re-ranqueo) ----------
+    thr = float(body.distance_threshold)
+    candidatos = [c for c in candidatos if c["dist"] <= thr]
+
+    if not candidatos:
+        return {
+            "respuesta": "No he encontrado información suficientemente relevante en los documentos para responder a esta pregunta.",
+            "fuentes": [],
+            "fragmentos_usados": [],
+            "distancias": [],
+        }
+
+    # ---------- 1.2 Limitar pool para re-ranqueo (evita prompts enormes) ----------
+    candidatos = sorted(candidatos, key=lambda x: x["dist"])
+    rerank_pool = candidatos[:MAX_RERANK_POOL]
+
     # ---------- 2. Re-ranqueo con GPT ----------
     indices_buenos = seleccionar_fragmentos_relevantes(
         pregunta=pregunta_original,
-        candidatos=candidatos,
-        max_frag=6,
+        candidatos=rerank_pool,
+        max_frag=MAX_CONTEXT_FRAGMENTS,
     )
 
     if not indices_buenos:
-        k = 5
-        candidatos_ordenados = sorted(candidatos, key=lambda x: x["dist"])
-        buenos = candidatos_ordenados[:k]
+        buenos = rerank_pool[:MAX_CONTEXT_FRAGMENTS]
     else:
-        buenos = [candidatos[i] for i in indices_buenos]
+        buenos = [rerank_pool[i] for i in indices_buenos][:MAX_CONTEXT_FRAGMENTS]
 
     # ---------- 3. Construir contexto ----------
     contexto_partes = []
@@ -628,7 +609,9 @@ async def ask_documents(
 
     contexto = "\n\n".join(contexto_partes)
 
-    # Marcador especial para saber si NO se han usado datos de los documentos
+    if len(contexto) > MAX_CONTEXT_CHARS_BACKEND:
+        contexto = contexto[:MAX_CONTEXT_CHARS_BACKEND]
+
     MARKER_SIN_DATOS = "[[SIN_DATOS_DOCUMENTOS]]"
 
     system_msg = (
@@ -636,15 +619,16 @@ async def ask_documents(
         "que aparece en los fragmentos de texto proporcionados.\n\n"
         "Instrucciones importantes:\n"
         "1) Usa siempre los fragmentos como única fuente de verdad cuando exista información relevante.\n"
-        "2) Si la pregunta es genérica, responde resumiendo la información relevante de los fragmentos.\n"
-        "3) Si los fragmentos NO contienen información útil para responder a la pregunta "
+        "2) No añadas detalles, ejemplos, nombres de herramientas, módulos o pasos técnicos "
+        "que NO aparezcan explícitamente en los fragmentos.\n"
+        "3) Si faltan detalles en los fragmentos, indícalo de forma clara y responde solo con lo que sí está.\n"
+        "4) Si los fragmentos NO contienen información útil para responder a la pregunta "
         "(por ejemplo, saludos como 'hola', preguntas sobre el tiempo actual, etc.), "
         "puedes responder con un mensaje general indicando que no hay datos en los documentos.\n"
-        f"4) Cuando NO utilices información de los documentos para elaborar tu respuesta, "
+        f"5) Cuando NO utilices información de los documentos para elaborar tu respuesta, "
         f"AÑADE al final de la respuesta exactamente este marcador: {MARKER_SIN_DATOS}\n"
         "   - No añadas texto después del marcador.\n"
-        "   - El marcador sirve para que el sistema sepa que no se han usado fragmentos.\n"
-        "5) Responde siempre en español neutro."
+        "6) Responde siempre en español neutro."
     )
 
     user_msg = (
@@ -674,7 +658,6 @@ async def ask_documents(
     respuesta = raw_answer.replace(MARKER_SIN_DATOS, "").strip()
 
     if sin_datos_documentos:
-        # No mostramos fuentes ni fragmentos
         return {
             "respuesta": respuesta,
             "fuentes": [],
@@ -689,7 +672,6 @@ async def ask_documents(
         "fragmentos_usados": [doc for doc, _, _ in filtrados],
         "distancias": [float(dist) for _, _, dist in filtrados],
     }
-
 
 
 # -------------------------------------------------
@@ -712,11 +694,7 @@ async def index_summary(
         filename = meta.get("filename", "desconocido")
         contador[filename] = contador.get(filename, 0) + 1
 
-    archivos = [
-        {"filename": name, "total_fragmentos": count}
-        for name, count in sorted(contador.items())
-    ]
-
+    archivos = [{"filename": name, "total_fragmentos": count} for name, count in sorted(contador.items())]
     return {"archivos": archivos}
 
 
@@ -746,10 +724,7 @@ async def file_fragments(
     if docs and isinstance(docs[0], list):
         docs = docs[0]
 
-    return {
-        "filename": filename,
-        "documentos": docs or [],
-    }
+    return {"filename": filename, "documentos": docs or []}
 
 
 # -------------------------------------------------
