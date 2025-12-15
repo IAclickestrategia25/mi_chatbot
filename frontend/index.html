@@ -772,6 +772,51 @@
           align-items: flex-start;
         }
       }
+      /* 1) Nada de scroll en la página */
+      html, body {
+        height: 100%;
+        overflow: hidden;
+      }
+
+      /* 2) La página ocupa el alto visible y no crece */
+      .page {
+        height: calc(100vh - 36px); /* ajusta si cambias el padding del body */
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+      }
+
+      /* 3) El layout ocupa el espacio restante */
+      .layout {
+        flex: 1;
+        min-height: 0;
+      }
+
+      /* 4) Evita que las columnas empujen altura */
+      .left-column,
+      #chat {
+        min-height: 0;
+      }
+
+      /* 5) El chat es el único que permite scroll (en messages) */
+      #chat .card-inner {
+        height: 100%;
+        min-height: 0;
+      }
+
+      #messages {
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+      }
+
+      /* 6) Quita scroll en elementos de la izquierda */
+      #filesList,
+      #fileDetails {
+        max-height: none;
+        overflow: hidden !important;
+      }
+
     </style>
 
 </head>
