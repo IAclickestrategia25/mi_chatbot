@@ -1,14 +1,14 @@
-# main.py
+# main.py uribe
 import os
 import base64
 import mimetypes
 from io import BytesIO, StringIO
 from typing import List, Dict, Any, Optional
 import hashlib
-import csv
 
-import fitz  # PyMuPDF para PDF
-import docx  # python-docx para DOCX
+import csv
+import fitz          # PyMuPDF para PDF
+import docx          # python-docx para DOCX
 from dotenv import load_dotenv
 from openai import OpenAI
 
@@ -49,14 +49,6 @@ FAILED_ATTEMPTS: Dict[str, Dict[str, Any]] = {}  # { "device_key": {"count": X, 
 MAX_ATTEMPTS = 5
 BLOCK_TIME_MINUTES = 5
 
-# Límites para evitar prompts enormes / timeouts
-MAX_RERANK_POOL = 20              # nº máximo de candidatos que pasamos al re-ranker
-MAX_CONTEXT_FRAGMENTS = 3         # nº máximo de fragmentos que usamos para responder
-MAX_CONTEXT_CHARS_BACKEND = 6000  # recorte del contexto total antes de llamar al LLM
-
-# Fallback si el threshold deja 0 candidatos
-FALLBACK_TOPK_IF_EMPTY = 10
-
 
 # -------------------------------------------------
 # APP FASTAPI + CORS + STATIC
@@ -65,7 +57,7 @@ app = FastAPI(title="ChromaDB FastAPI Integration")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # si es entorno privado, considera restringirlo
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -75,34 +67,20 @@ app.mount("/static", StaticFiles(directory="frontend"), name="static")
 
 
 # -------------------------------------------------
-# UTILIDADES
-# -------------------------------------------------
-def normalize_ws(s: str) -> str:
-    """Limpia espacios y saltos excesivos para que el LLM vea mejor el contenido."""
-    if not s:
-        return ""
-    lines = [line.rstrip() for line in s.splitlines()]
-    return "\n".join(lines).strip()
-
-
-def suggested_k(question: str) -> int:
-    """Ajusta nº de fragmentos según tipo de pregunta."""
-    q = (question or "").strip().lower()
-    if q.startswith(("qué es", "que es", "define", "definición", "definicion")):
-        return 2
-    return MAX_CONTEXT_FRAGMENTS
-
-
-# -------------------------------------------------
 # AUTENTICACIÓN Y ROLES
 # -------------------------------------------------
 def generate_session_token() -> str:
-    """Genera un token de sesión irrepetible."""
+    """
+    Genera un token de sesión irrepetible.
+    No depende de la contraseña para evitar patrones.
+    """
     return hashlib.sha256(os.urandom(32)).hexdigest()
 
 
 def get_session_role(request: Request) -> Optional[str]:
-    """Devuelve el rol asociado al token de la cookie, o None si no es válido."""
+    """
+    Devuelve el rol asociado al token de la cookie, o None si no es válido.
+    """
     cookie_val = request.cookies.get(AUTH_COOKIE_NAME)
     if not cookie_val:
         return None
@@ -110,7 +88,10 @@ def get_session_role(request: Request) -> Optional[str]:
 
 
 def require_auth(request: Request) -> str:
-    """Requiere estar logueado. Devuelve el rol ("admin" o "user")."""
+    """
+    Dependencia general: requiere estar logueado.
+    Devuelve el rol ("admin" o "user").
+    """
     role = get_session_role(request)
     if not role:
         raise HTTPException(status_code=401, detail="No autorizado")
@@ -118,7 +99,9 @@ def require_auth(request: Request) -> str:
 
 
 def require_admin(request: Request) -> str:
-    """Requiere rol admin."""
+    """
+    Dependencia para endpoints solo de administrador.
+    """
     role = require_auth(request)
     if role != "admin":
         raise HTTPException(status_code=403, detail="Solo disponible para administradores")
@@ -130,6 +113,7 @@ def require_admin(request: Request) -> str:
 # -------------------------------------------------
 @app.get("/")
 async def serve_frontend(request: Request):
+    # Si no está autenticado, lo mandamos al login
     if not get_session_role(request):
         return RedirectResponse(url="/login", status_code=302)
     return FileResponse("frontend/index.html")
@@ -137,6 +121,7 @@ async def serve_frontend(request: Request):
 
 @app.get("/login")
 async def login_page(request: Request):
+    # Si ya está autenticado, lo mandamos directamente al asistente
     if get_session_role(request):
         return RedirectResponse(url="/", status_code=302)
     return FileResponse("frontend/login.html")
@@ -145,18 +130,21 @@ async def login_page(request: Request):
 @app.post("/login")
 async def do_login(request: Request):
     """
-    Recibe password, crea cookie de sesión y responde JSON.
+    Recibe el formulario de login (campo 'password') y, si es correcto,
+    crea una cookie de sesión y responde en JSON.
+    El frontend se encarga de redirigir o mostrar el error.
     """
     form = await request.form()
-    password = (form.get("password", "") or "").strip()
+    password = form.get("password", "")
 
+    # Identificador de dispositivo: IP + user-agent
     client_ip = request.client.host if request.client else "unknown"
     user_agent = request.headers.get("user-agent", "unknown")
     device_key = f"{client_ip}|{user_agent[:80]}"
 
     now = datetime.utcnow()
 
-    # 1) Bloqueo por intentos
+    # 1) Comprobar si el dispositivo está bloqueado
     block_info = FAILED_ATTEMPTS.get(device_key)
     if block_info and block_info.get("until") and block_info["until"] > now:
         remaining_seconds = int((block_info["until"] - now).total_seconds())
@@ -165,13 +153,14 @@ async def do_login(request: Request):
             {
                 "ok": False,
                 "error": (
-                    "Demasiados intentos fallidos en este dispositivo. "
+                    f"Demasiados intentos fallidos en este dispositivo. "
                     f"Inténtalo de nuevo en {remaining_minutes} minuto(s)."
                 ),
             },
             status_code=429,
         )
     elif block_info and block_info.get("until") and block_info["until"] <= now:
+        # Bloqueo expirado -> limpiamos
         del FAILED_ATTEMPTS[device_key]
 
     if not ADMIN_PASSWORD and not USER_PASSWORD:
@@ -180,43 +169,47 @@ async def do_login(request: Request):
             status_code=500,
         )
 
-    # 2) Determinar rol
+    # 2) Determinar rol según la contraseña introducida
     role: Optional[str] = None
     if ADMIN_PASSWORD and password == ADMIN_PASSWORD:
         role = "admin"
     elif USER_PASSWORD and password == USER_PASSWORD:
         role = "user"
 
-    # 3) Password incorrecta
+    # 3) Contraseña incorrecta -> registrar intento
     if role is None:
         data = FAILED_ATTEMPTS.get(device_key, {"count": 0, "until": None})
         data["count"] += 1
+
+        # Si se supera el límite, se bloquea durante X minutos
         if data["count"] >= MAX_ATTEMPTS:
             data["until"] = now + timedelta(minutes=BLOCK_TIME_MINUTES)
         FAILED_ATTEMPTS[device_key] = data
-        return JSONResponse({"ok": False, "error": "Contraseña incorrecta"}, status_code=401)
 
-    # 4) Login correcto
+        return JSONResponse(
+            {"ok": False, "error": "Contraseña incorrecta"},
+            status_code=401,
+        )
+
+    # 4) Login correcto -> limpiar intentos fallidos de este dispositivo
     if device_key in FAILED_ATTEMPTS:
         del FAILED_ATTEMPTS[device_key]
 
+    # 5) Generar token de sesión y guardarlo con el rol
     token = generate_session_token()
     VALID_SESSIONS[token] = role
 
     response = JSONResponse({"ok": True, "role": role})
-
-    # Secure condicional: en Render será https; en local no.
-    is_https = request.url.scheme == "https"
-
     response.set_cookie(
         AUTH_COOKIE_NAME,
         token,
-        httponly=True,
-        secure=is_https,
-        samesite="Strict",
-        max_age=60 * 60 * 12,
+        httponly=True,          # JS no puede leerla
+        secure=True,            # en Render va sobre HTTPS
+        samesite="Strict",      # previene CSRF
+        max_age=60 * 60 * 12,   # 12h de sesión
         path="/",
     )
+
     return response
 
 
@@ -257,51 +250,50 @@ class FileIndexItem(BaseModel):
 def seleccionar_fragmentos_relevantes(
     pregunta: str,
     candidatos: List[Dict[str, Any]],
-    max_frag: int = 3
+    max_frag: int = 6
 ) -> List[int]:
-    """
-    Re-ranquea candidatos con LLM devolviendo índices (máx. max_frag).
-    """
     if not candidatos:
         return []
 
     partes = []
     for i, c in enumerate(candidatos):
-        meta = c.get("meta", {}) or {}
-        dist = float(c.get("dist", 0.0) or 0.0)
+        meta = c.get("meta", {})
+        dist = c.get("dist", 0.0)
         filename = meta.get("filename", "desconocido")
-        doc = normalize_ws(c.get("doc", "") or "")
-        partes.append(f"[{i}] (archivo: {filename}, distancia: {dist:.3f})\n{doc}\n")
+        partes.append(
+            f"[{i}] (archivo: {filename}, distancia: {dist:.3f})\n{c.get('doc','')}\n"
+        )
 
     texto_fragmentos = "\n\n".join(partes)
 
     system_msg = (
         "Eres un asistente que actúa como motor de re-ranqueo de documentos.\n"
-        "Tu tarea es elegir qué fragmentos son MÁS ÚTILES para responder.\n\n"
+        "Tu tarea es elegir qué fragmentos de texto son MÁS ÚTILES para "
+        "responder a la pregunta del usuario.\n\n"
         "Instrucciones:\n"
-        " - Devuelve SOLO una lista de índices separados por comas (ej: 0,2,5).\n"
+        " - Devuelve SOLO una lista de índices separados por comas (por ejemplo: 0,2,5).\n"
         " - No expliques nada, no añadas texto adicional.\n"
-        f" - Devuelve como máximo {max_frag} índices.\n"
+        " - Elige como máximo unos pocos fragmentos muy relevantes.\n"
     )
 
     user_msg = (
-        f"Pregunta:\n{pregunta}\n\n"
-        "Fragmentos candidatos:\n\n"
+        f"Pregunta del usuario:\n{pregunta}\n\n"
+        "Estos son los fragmentos candidatos:\n\n"
         f"{texto_fragmentos}\n\n"
-        "Devuelve los índices."
+        f"Indica los índices de los fragmentos más relevantes (máx. {max_frag}) "
+        "para responder a la pregunta."
     )
 
     try:
         completion = openai_client.chat.completions.create(
             model="gpt-4.1-mini",
             temperature=0.0,
-            max_tokens=30,  # IMPORTANTE: aquí no hace falta más
             messages=[
                 {"role": "system", "content": system_msg},
                 {"role": "user", "content": user_msg},
             ],
         )
-        texto_indices = (completion.choices[0].message.content or "").strip()
+        texto_indices = completion.choices[0].message.content.strip()
     except Exception:
         return list(range(min(max_frag, len(candidatos))))
 
@@ -313,12 +305,10 @@ def seleccionar_fragmentos_relevantes(
             if 0 <= i < len(candidatos):
                 indices.append(i)
 
-    # únicos manteniendo orden
     indices_unicos: List[int] = []
     for i in indices:
         if i not in indices_unicos:
             indices_unicos.append(i)
-
     return indices_unicos[:max_frag]
 
 
@@ -394,7 +384,6 @@ def describir_imagen_bytes(data: bytes, filename: str) -> str:
     resp = openai_client.chat.completions.create(
         model="gpt-4.1-mini",
         temperature=0.0,
-        max_tokens=450,
         messages=[
             {
                 "role": "user",
@@ -406,15 +395,7 @@ def describir_imagen_bytes(data: bytes, filename: str) -> str:
         ],
     )
 
-    return (resp.choices[0].message.content or "").strip()
-
-
-# -------------------------------------------------
-# ENDPOINT: Nº DE SESIONES ACTIVAS (APROX.)
-# -------------------------------------------------
-@app.get("/api/active-sessions/")
-async def active_sessions():
-    return {"count": len(VALID_SESSIONS)}
+    return resp.choices[0].message.content.strip()
 
 
 # -------------------------------------------------
@@ -427,7 +408,11 @@ async def add_documents(
     col=Depends(get_chroma_collection),
 ):
     try:
-        col.add(ids=body.ids, documents=body.documents, metadatas=body.metadatas)
+        col.add(
+            ids=body.ids,
+            documents=body.documents,
+            metadatas=body.metadatas,
+        )
         return {"message": "Documents added successfully", "ids": body.ids}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -452,6 +437,7 @@ async def upload_files(
     for file in files:
         filename = file.filename
         ext = (filename or "").lower().split(".")[-1]
+
         data = await file.read()
 
         try:
@@ -474,7 +460,7 @@ async def upload_files(
             print(f"Error procesando {filename}: {e}")
             continue
 
-        if not (texto or "").strip():
+        if not texto.strip():
             print(f"Sin texto/descripcion útil en {filename}, se omite.")
             continue
 
@@ -488,7 +474,13 @@ async def upload_files(
             doc_id = f"{filename}_{i}"
             batch_ids.append(doc_id)
             batch_docs.append(frag)
-            batch_metas.append({"filename": filename, "chunk": i, "tipo": tipo})
+            batch_metas.append(
+                {
+                    "filename": filename,
+                    "chunk": i,
+                    "tipo": tipo,
+                }
+            )
 
             if len(batch_ids) >= BATCH_SIZE:
                 try:
@@ -540,9 +532,7 @@ async def ask_documents(
     role: str = Depends(require_auth),
     col=Depends(get_chroma_collection),
 ):
-    pregunta_original = (body.question or "").strip()
-    if not pregunta_original:
-        raise HTTPException(status_code=400, detail="La pregunta no puede estar vacía.")
+    pregunta_original = body.question.strip()
 
     # ---------- 0. Reescritura de la pregunta para búsqueda ----------
     rewrite_system = (
@@ -550,23 +540,23 @@ async def ask_documents(
         "Transforma la pregunta del usuario en una consulta MUY corta y útil para "
         "buscar en una base de conocimiento. Devuelve SOLO la consulta, sin comillas.\n"
     )
+    rewrite_user = f"Pregunta del usuario: {pregunta_original}"
 
     try:
         rew = openai_client.chat.completions.create(
             model="gpt-4.1-mini",
             temperature=0.0,
-            max_tokens=60,
             messages=[
                 {"role": "system", "content": rewrite_system},
-                {"role": "user", "content": f"Pregunta: {pregunta_original}"},
+                {"role": "user", "content": rewrite_user},
             ],
         )
-        consulta_chroma = (rew.choices[0].message.content or "").strip() or pregunta_original
+        consulta_chroma = rew.choices[0].message.content.strip()
     except Exception:
         consulta_chroma = pregunta_original
 
     # ---------- 1. Consultar Chroma ----------
-    n_candidatos = max(int(body.n_results), 20)
+    n_candidatos = max(body.n_results, 20)
     try:
         res = col.query(
             query_texts=[consulta_chroma],
@@ -585,6 +575,7 @@ async def ask_documents(
         candidatos.append({"doc": doc, "meta": meta, "dist": float(dist)})
 
     if not candidatos:
+        # Sin nada relevante en Chroma
         return {
             "respuesta": "No he encontrado información relevante en los documentos para responder a esta pregunta.",
             "fuentes": [],
@@ -592,77 +583,59 @@ async def ask_documents(
             "distancias": [],
         }
 
-    # ---------- 1.1 Filtrar por umbral de distancia ----------
-    thr = float(body.distance_threshold)
-    candidatos_sorted = sorted(candidatos, key=lambda x: x["dist"])
-    filtrados_thr = [c for c in candidatos_sorted if c["dist"] <= thr]
-
-    # Fallback si el threshold lo deja en 0
-    if filtrados_thr:
-        candidatos = filtrados_thr
-    else:
-        candidatos = candidatos_sorted[:FALLBACK_TOPK_IF_EMPTY]
-
-    if not candidatos:
-        return {
-            "respuesta": "No he encontrado información suficientemente relevante en los documentos para responder a esta pregunta.",
-            "fuentes": [],
-            "fragmentos_usados": [],
-            "distancias": [],
-        }
-
-    # ---------- 1.2 Limitar pool para re-ranqueo ----------
-    rerank_pool = candidatos[:MAX_RERANK_POOL]
-
     # ---------- 2. Re-ranqueo con GPT ----------
-    k = suggested_k(pregunta_original)
-
     indices_buenos = seleccionar_fragmentos_relevantes(
         pregunta=pregunta_original,
-        candidatos=rerank_pool,
-        max_frag=k,
+        candidatos=candidatos,
+        max_frag=6,
     )
 
     if not indices_buenos:
-        buenos = rerank_pool[:k]
+        k = 5
+        candidatos_ordenados = sorted(candidatos, key=lambda x: x["dist"])
+        buenos = candidatos_ordenados[:k]
     else:
-        buenos = [rerank_pool[i] for i in indices_buenos][:k]
+        buenos = [candidatos[i] for i in indices_buenos]
 
     # ---------- 3. Construir contexto ----------
     contexto_partes = []
     filtrados = []
     for i, c in enumerate(buenos, start=1):
-        doc = normalize_ws(c.get("doc", "") or "")
-        meta = c.get("meta", {}) or {}
-        dist = float(c.get("dist", 0.0) or 0.0)
+        doc = c["doc"]
+        meta = c["meta"]
+        dist = c["dist"]
         filtrados.append((doc, meta, dist))
         filename = meta.get("filename", "desconocido")
         contexto_partes.append(
             f"[FRAGMENTO {i} | archivo: {filename} | distancia: {dist:.3f}]\n{doc}\n"
         )
 
-    contexto = "\n\n".join(contexto_partes).strip()
-    if len(contexto) > MAX_CONTEXT_CHARS_BACKEND:
-        contexto = contexto[:MAX_CONTEXT_CHARS_BACKEND]
+    contexto = "\n\n".join(contexto_partes)
 
+    # Marcador especial para saber si NO se han usado datos de los documentos
     MARKER_SIN_DATOS = "[[SIN_DATOS_DOCUMENTOS]]"
 
     system_msg = (
-        "Eres un asistente RAG. Responde usando ÚNICAMENTE la información contenida "
-        "en los fragmentos proporcionados.\n\n"
-        "Reglas:\n"
-        "1) Empieza con la respuesta directa en 1-2 frases.\n"
-        "2) Amplía solo si aporta valor directo (máx. 8-12 líneas).\n"
-        "3) No añadas detalles no presentes en los fragmentos.\n"
-        "4) Si faltan datos en los fragmentos, dilo claramente y para.\n"
-        f"5) Si NO usas los fragmentos, añade al final exactamente: {MARKER_SIN_DATOS}\n"
-        "Responde en español neutro."
+        "Eres un asistente que responde ÚNICAMENTE usando la información "
+        "que aparece en los fragmentos de texto proporcionados.\n\n"
+        "Instrucciones importantes:\n"
+        "1) Usa siempre los fragmentos como única fuente de verdad cuando exista información relevante.\n"
+        "2) Si la pregunta es genérica, responde resumiendo la información relevante de los fragmentos.\n"
+        "3) Si los fragmentos NO contienen información útil para responder a la pregunta "
+        "(por ejemplo, saludos como 'hola', preguntas sobre el tiempo actual, etc.), "
+        "puedes responder con un mensaje general indicando que no hay datos en los documentos.\n"
+        f"4) Cuando NO utilices información de los documentos para elaborar tu respuesta, "
+        f"AÑADE al final de la respuesta exactamente este marcador: {MARKER_SIN_DATOS}\n"
+        "   - No añadas texto después del marcador.\n"
+        "   - El marcador sirve para que el sistema sepa que no se han usado fragmentos.\n"
+        "5) Responde siempre en español neutro."
     )
 
-    # IMPORTANTE: quitamos “consulta_chroma” del prompt final (menos ruido)
     user_msg = (
-        f"Pregunta del usuario:\n{pregunta_original}\n\n"
-        "Fragmentos (usa solo esto):\n\n"
+        f"Pregunta original del usuario:\n{pregunta_original}\n\n"
+        f"Consulta usada para buscar en Chroma:\n{consulta_chroma}\n\n"
+        "A continuación tienes fragmentos de documentos (contexto). "
+        "Utilízalos para responder, sin añadir información externa:\n\n"
         f"{contexto}"
     )
 
@@ -671,13 +644,12 @@ async def ask_documents(
         completion = openai_client.chat.completions.create(
             model="gpt-4.1-mini",
             temperature=0.0,
-            max_tokens=450,
             messages=[
                 {"role": "system", "content": system_msg},
                 {"role": "user", "content": user_msg},
             ],
         )
-        raw_answer = (completion.choices[0].message.content or "").strip()
+        raw_answer = completion.choices[0].message.content.strip()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error llamando a OpenAI: {e}")
 
@@ -686,6 +658,7 @@ async def ask_documents(
     respuesta = raw_answer.replace(MARKER_SIN_DATOS, "").strip()
 
     if sin_datos_documentos:
+        # No mostramos fuentes ni fragmentos
         return {
             "respuesta": respuesta,
             "fuentes": [],
@@ -696,10 +669,25 @@ async def ask_documents(
     # ---------- 6. Caso normal: sí ha usado documentos ----------
     return {
         "respuesta": respuesta,
-        "fuentes": list({(meta or {}).get("filename", "desconocido") for _, meta, _ in filtrados}),
+        "fuentes": list({meta.get("filename", "desconocido") for _, meta, _ in filtrados}),
         "fragmentos_usados": [doc for doc, _, _ in filtrados],
         "distancias": [float(dist) for _, _, dist in filtrados],
     }
+
+
+
+
+
+@app.get("/api/active-sessions/")
+async def active_sessions():
+
+    return {
+        "count": len(VALID_SESSIONS)
+    }
+
+
+
+
 
 
 # -------------------------------------------------
@@ -719,10 +707,14 @@ async def index_summary(
     contador: Dict[str, int] = {}
 
     for meta in metadatas:
-        filename = (meta or {}).get("filename", "desconocido")
+        filename = meta.get("filename", "desconocido")
         contador[filename] = contador.get(filename, 0) + 1
 
-    archivos = [{"filename": name, "total_fragmentos": count} for name, count in sorted(contador.items())]
+    archivos = [
+        {"filename": name, "total_fragmentos": count}
+        for name, count in sorted(contador.items())
+    ]
+
     return {"archivos": archivos}
 
 
@@ -752,7 +744,10 @@ async def file_fragments(
     if docs and isinstance(docs[0], list):
         docs = docs[0]
 
-    return {"filename": filename, "documentos": docs or []}
+    return {
+        "filename": filename,
+        "documentos": docs or [],
+    }
 
 
 # -------------------------------------------------
