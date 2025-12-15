@@ -6,6 +6,7 @@ from io import BytesIO, StringIO
 from typing import List, Dict, Any, Optional
 import hashlib
 import csv
+
 import fitz  # PyMuPDF para PDF
 import docx  # python-docx para DOCX
 from dotenv import load_dotenv
@@ -53,6 +54,9 @@ MAX_RERANK_POOL = 20              # nº máximo de candidatos que pasamos al re-
 MAX_CONTEXT_FRAGMENTS = 3         # nº máximo de fragmentos que usamos para responder
 MAX_CONTEXT_CHARS_BACKEND = 6000  # recorte del contexto total antes de llamar al LLM
 
+# Fallback si el threshold deja 0 candidatos
+FALLBACK_TOPK_IF_EMPTY = 10
+
 
 # -------------------------------------------------
 # APP FASTAPI + CORS + STATIC
@@ -68,6 +72,25 @@ app.add_middleware(
 )
 
 app.mount("/static", StaticFiles(directory="frontend"), name="static")
+
+
+# -------------------------------------------------
+# UTILIDADES
+# -------------------------------------------------
+def normalize_ws(s: str) -> str:
+    """Limpia espacios y saltos excesivos para que el LLM vea mejor el contenido."""
+    if not s:
+        return ""
+    lines = [line.rstrip() for line in s.splitlines()]
+    return "\n".join(lines).strip()
+
+
+def suggested_k(question: str) -> int:
+    """Ajusta nº de fragmentos según tipo de pregunta."""
+    q = (question or "").strip().lower()
+    if q.startswith(("qué es", "que es", "define", "definición", "definicion")):
+        return 2
+    return MAX_CONTEXT_FRAGMENTS
 
 
 # -------------------------------------------------
@@ -125,7 +148,7 @@ async def do_login(request: Request):
     Recibe password, crea cookie de sesión y responde JSON.
     """
     form = await request.form()
-    password = form.get("password", "")
+    password = (form.get("password", "") or "").strip()
 
     client_ip = request.client.host if request.client else "unknown"
     user_agent = request.headers.get("user-agent", "unknown")
@@ -244,41 +267,41 @@ def seleccionar_fragmentos_relevantes(
 
     partes = []
     for i, c in enumerate(candidatos):
-        meta = c.get("meta", {})
-        dist = c.get("dist", 0.0)
+        meta = c.get("meta", {}) or {}
+        dist = float(c.get("dist", 0.0) or 0.0)
         filename = meta.get("filename", "desconocido")
-        partes.append(
-            f"[{i}] (archivo: {filename}, distancia: {dist:.3f})\n{c.get('doc','')}\n"
-        )
+        doc = normalize_ws(c.get("doc", "") or "")
+        partes.append(f"[{i}] (archivo: {filename}, distancia: {dist:.3f})\n{doc}\n")
 
     texto_fragmentos = "\n\n".join(partes)
 
     system_msg = (
         "Eres un asistente que actúa como motor de re-ranqueo de documentos.\n"
-        "Tu tarea es elegir qué fragmentos de texto son MÁS ÚTILES para responder.\n\n"
+        "Tu tarea es elegir qué fragmentos son MÁS ÚTILES para responder.\n\n"
         "Instrucciones:\n"
-        " - Devuelve SOLO una lista de índices separados por comas (por ejemplo: 0,2,5).\n"
+        " - Devuelve SOLO una lista de índices separados por comas (ej: 0,2,5).\n"
         " - No expliques nada, no añadas texto adicional.\n"
-        " - Elige como máximo unos pocos fragmentos muy relevantes.\n"
+        f" - Devuelve como máximo {max_frag} índices.\n"
     )
 
     user_msg = (
-        f"Pregunta del usuario:\n{pregunta}\n\n"
-        "Estos son los fragmentos candidatos:\n\n"
+        f"Pregunta:\n{pregunta}\n\n"
+        "Fragmentos candidatos:\n\n"
         f"{texto_fragmentos}\n\n"
-        f"Indica los índices de los fragmentos más relevantes (máx. {max_frag})."
+        "Devuelve los índices."
     )
 
     try:
         completion = openai_client.chat.completions.create(
             model="gpt-4.1-mini",
             temperature=0.0,
+            max_tokens=30,  # IMPORTANTE: aquí no hace falta más
             messages=[
                 {"role": "system", "content": system_msg},
                 {"role": "user", "content": user_msg},
             ],
         )
-        texto_indices = completion.choices[0].message.content.strip()
+        texto_indices = (completion.choices[0].message.content or "").strip()
     except Exception:
         return list(range(min(max_frag, len(candidatos))))
 
@@ -371,6 +394,7 @@ def describir_imagen_bytes(data: bytes, filename: str) -> str:
     resp = openai_client.chat.completions.create(
         model="gpt-4.1-mini",
         temperature=0.0,
+        max_tokens=450,
         messages=[
             {
                 "role": "user",
@@ -382,7 +406,7 @@ def describir_imagen_bytes(data: bytes, filename: str) -> str:
         ],
     )
 
-    return resp.choices[0].message.content.strip()
+    return (resp.choices[0].message.content or "").strip()
 
 
 # -------------------------------------------------
@@ -450,7 +474,7 @@ async def upload_files(
             print(f"Error procesando {filename}: {e}")
             continue
 
-        if not texto.strip():
+        if not (texto or "").strip():
             print(f"Sin texto/descripcion útil en {filename}, se omite.")
             continue
 
@@ -516,7 +540,9 @@ async def ask_documents(
     role: str = Depends(require_auth),
     col=Depends(get_chroma_collection),
 ):
-    pregunta_original = body.question.strip()
+    pregunta_original = (body.question or "").strip()
+    if not pregunta_original:
+        raise HTTPException(status_code=400, detail="La pregunta no puede estar vacía.")
 
     # ---------- 0. Reescritura de la pregunta para búsqueda ----------
     rewrite_system = (
@@ -524,18 +550,18 @@ async def ask_documents(
         "Transforma la pregunta del usuario en una consulta MUY corta y útil para "
         "buscar en una base de conocimiento. Devuelve SOLO la consulta, sin comillas.\n"
     )
-    rewrite_user = f"Pregunta del usuario: {pregunta_original}"
 
     try:
         rew = openai_client.chat.completions.create(
             model="gpt-4.1-mini",
             temperature=0.0,
+            max_tokens=60,
             messages=[
                 {"role": "system", "content": rewrite_system},
-                {"role": "user", "content": rewrite_user},
+                {"role": "user", "content": f"Pregunta: {pregunta_original}"},
             ],
         )
-        consulta_chroma = rew.choices[0].message.content.strip()
+        consulta_chroma = (rew.choices[0].message.content or "").strip() or pregunta_original
     except Exception:
         consulta_chroma = pregunta_original
 
@@ -566,9 +592,16 @@ async def ask_documents(
             "distancias": [],
         }
 
-    # ---------- 1.1 Filtrar por umbral de distancia (ANTES del re-ranqueo) ----------
+    # ---------- 1.1 Filtrar por umbral de distancia ----------
     thr = float(body.distance_threshold)
-    candidatos = [c for c in candidatos if c["dist"] <= thr]
+    candidatos_sorted = sorted(candidatos, key=lambda x: x["dist"])
+    filtrados_thr = [c for c in candidatos_sorted if c["dist"] <= thr]
+
+    # Fallback si el threshold lo deja en 0
+    if filtrados_thr:
+        candidatos = filtrados_thr
+    else:
+        candidatos = candidatos_sorted[:FALLBACK_TOPK_IF_EMPTY]
 
     if not candidatos:
         return {
@@ -578,64 +611,58 @@ async def ask_documents(
             "distancias": [],
         }
 
-    # ---------- 1.2 Limitar pool para re-ranqueo (evita prompts enormes) ----------
-    candidatos = sorted(candidatos, key=lambda x: x["dist"])
+    # ---------- 1.2 Limitar pool para re-ranqueo ----------
     rerank_pool = candidatos[:MAX_RERANK_POOL]
 
     # ---------- 2. Re-ranqueo con GPT ----------
+    k = suggested_k(pregunta_original)
+
     indices_buenos = seleccionar_fragmentos_relevantes(
         pregunta=pregunta_original,
         candidatos=rerank_pool,
-        max_frag=MAX_CONTEXT_FRAGMENTS,
+        max_frag=k,
     )
 
     if not indices_buenos:
-        buenos = rerank_pool[:MAX_CONTEXT_FRAGMENTS]
+        buenos = rerank_pool[:k]
     else:
-        buenos = [rerank_pool[i] for i in indices_buenos][:MAX_CONTEXT_FRAGMENTS]
+        buenos = [rerank_pool[i] for i in indices_buenos][:k]
 
     # ---------- 3. Construir contexto ----------
     contexto_partes = []
     filtrados = []
     for i, c in enumerate(buenos, start=1):
-        doc = c["doc"]
-        meta = c["meta"]
-        dist = c["dist"]
+        doc = normalize_ws(c.get("doc", "") or "")
+        meta = c.get("meta", {}) or {}
+        dist = float(c.get("dist", 0.0) or 0.0)
         filtrados.append((doc, meta, dist))
         filename = meta.get("filename", "desconocido")
         contexto_partes.append(
             f"[FRAGMENTO {i} | archivo: {filename} | distancia: {dist:.3f}]\n{doc}\n"
         )
 
-    contexto = "\n\n".join(contexto_partes)
-
+    contexto = "\n\n".join(contexto_partes).strip()
     if len(contexto) > MAX_CONTEXT_CHARS_BACKEND:
         contexto = contexto[:MAX_CONTEXT_CHARS_BACKEND]
 
     MARKER_SIN_DATOS = "[[SIN_DATOS_DOCUMENTOS]]"
 
     system_msg = (
-        "Eres un asistente que responde ÚNICAMENTE usando la información "
-        "que aparece en los fragmentos de texto proporcionados.\n\n"
-        "Instrucciones importantes:\n"
-        "1) Usa siempre los fragmentos como única fuente de verdad cuando exista información relevante.\n"
-        "2) No añadas detalles, ejemplos, nombres de herramientas, módulos o pasos técnicos "
-        "que NO aparezcan explícitamente en los fragmentos.\n"
-        "3) Si faltan detalles en los fragmentos, indícalo de forma clara y responde solo con lo que sí está.\n"
-        "4) Si los fragmentos NO contienen información útil para responder a la pregunta "
-        "(por ejemplo, saludos como 'hola', preguntas sobre el tiempo actual, etc.), "
-        "puedes responder con un mensaje general indicando que no hay datos en los documentos.\n"
-        f"5) Cuando NO utilices información de los documentos para elaborar tu respuesta, "
-        f"AÑADE al final de la respuesta exactamente este marcador: {MARKER_SIN_DATOS}\n"
-        "   - No añadas texto después del marcador.\n"
-        "6) Responde siempre en español neutro."
+        "Eres un asistente RAG. Responde usando ÚNICAMENTE la información contenida "
+        "en los fragmentos proporcionados.\n\n"
+        "Reglas:\n"
+        "1) Empieza con la respuesta directa en 1-2 frases.\n"
+        "2) Amplía solo si aporta valor directo (máx. 8-12 líneas).\n"
+        "3) No añadas detalles no presentes en los fragmentos.\n"
+        "4) Si faltan datos en los fragmentos, dilo claramente y para.\n"
+        f"5) Si NO usas los fragmentos, añade al final exactamente: {MARKER_SIN_DATOS}\n"
+        "Responde en español neutro."
     )
 
+    # IMPORTANTE: quitamos “consulta_chroma” del prompt final (menos ruido)
     user_msg = (
-        f"Pregunta original del usuario:\n{pregunta_original}\n\n"
-        f"Consulta usada para buscar en Chroma:\n{consulta_chroma}\n\n"
-        "A continuación tienes fragmentos de documentos (contexto). "
-        "Utilízalos para responder, sin añadir información externa:\n\n"
+        f"Pregunta del usuario:\n{pregunta_original}\n\n"
+        "Fragmentos (usa solo esto):\n\n"
         f"{contexto}"
     )
 
@@ -644,12 +671,13 @@ async def ask_documents(
         completion = openai_client.chat.completions.create(
             model="gpt-4.1-mini",
             temperature=0.0,
+            max_tokens=450,
             messages=[
                 {"role": "system", "content": system_msg},
                 {"role": "user", "content": user_msg},
             ],
         )
-        raw_answer = completion.choices[0].message.content.strip()
+        raw_answer = (completion.choices[0].message.content or "").strip()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error llamando a OpenAI: {e}")
 
@@ -668,7 +696,7 @@ async def ask_documents(
     # ---------- 6. Caso normal: sí ha usado documentos ----------
     return {
         "respuesta": respuesta,
-        "fuentes": list({meta.get("filename", "desconocido") for _, meta, _ in filtrados}),
+        "fuentes": list({(meta or {}).get("filename", "desconocido") for _, meta, _ in filtrados}),
         "fragmentos_usados": [doc for doc, _, _ in filtrados],
         "distancias": [float(dist) for _, _, dist in filtrados],
     }
@@ -691,7 +719,7 @@ async def index_summary(
     contador: Dict[str, int] = {}
 
     for meta in metadatas:
-        filename = meta.get("filename", "desconocido")
+        filename = (meta or {}).get("filename", "desconocido")
         contador[filename] = contador.get(filename, 0) + 1
 
     archivos = [{"filename": name, "total_fragmentos": count} for name, count in sorted(contador.items())]
