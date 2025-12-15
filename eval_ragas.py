@@ -1,14 +1,24 @@
 import os
 import time
 import json
-import csv
 from typing import List, Dict, Any, Optional
 
 import requests
 from datasets import Dataset
 
 from ragas import evaluate
-from ragas.metrics import faithfulness, answer_relevancy
+from ragas.metrics import faithfulness
+
+# Compatibilidad entre versiones de RAGAS:
+# - algunas tienen answer_relevancy
+# - otras answer_relevance
+try:
+    from ragas.metrics import answer_relevancy as _answer_rel_metric
+except Exception:
+    try:
+        from ragas.metrics import answer_relevance as _answer_rel_metric
+    except Exception:
+        _answer_rel_metric = None
 
 
 # =========================
@@ -18,10 +28,9 @@ BASE_URL = "https://mi-chatbot-ynz8.onrender.com"
 LOGIN_URL = f"{BASE_URL}/login"
 ASK_URL = f"{BASE_URL}/api/ask/"
 
-# Pega aquí tu password de USER o ADMIN (con USER vale para preguntar)
+# Password (mejor por variable de entorno)
 PASSWORD = os.getenv("CHATBOT_PASSWORD", "PON_AQUI_TU_PASSWORD")
 
-# Preguntas de evaluación. Recomendación: que sean preguntas que seguro existen en los documentos.
 QUESTIONS = [
     "Como funciona el sistema de automatizacion",
     "Que es una guia de cooperativistas",
@@ -32,14 +41,16 @@ QUESTIONS = [
 N_RESULTS = 15
 DISTANCE_THRESHOLD = 1.2
 
-# Timeouts y reintentos (Render + OpenAI + Chroma pueden tardar)
+# Timeouts y reintentos
 REQUEST_TIMEOUT_SECONDS = 180
 REQUEST_RETRIES = 3
 
-# Recortes para evitar problemas de longitud (max_tokens) en RAGAS
-MAX_CONTEXTS = 3            # número máximo de fragmentos
-MAX_CONTEXT_CHARS = 2000    # recorte por fragmento
-MAX_ANSWER_CHARS = 1500     # recorte de la respuesta
+# Recortes (IMPORTANTE):
+# - recortamos CONTEXTOS para evitar max_tokens en RAGAS
+# - NO recortamos ANSWER para no penalizar por truncado artificial
+MAX_CONTEXTS = 2            # recomendado: 2 o 3
+MAX_CONTEXT_CHARS = 1500    # recomendado: 1200-2000
+MAX_ANSWER_CHARS = None     # None = no recortar respuesta
 
 # Salidas
 OUT_JSONL = "ragas_rows.jsonl"
@@ -65,7 +76,6 @@ def login_session() -> requests.Session:
         )
 
     s = requests.Session()
-    # El frontend usa FormData; aquí enviamos form-encoded equivalente.
     r = s.post(LOGIN_URL, data={"password": PASSWORD}, timeout=60)
     r.raise_for_status()
     data = r.json()
@@ -99,7 +109,6 @@ def ask_chatbot(session: requests.Session, question: str) -> Dict[str, Any]:
 
         except Exception as e:
             last_err = e
-            # backoff simple
             time.sleep(2 * (i + 1))
 
     raise last_err if last_err else RuntimeError("Fallo desconocido en ask_chatbot")
@@ -117,31 +126,36 @@ def warmup(session: requests.Session) -> None:
 
 def build_rows(session: requests.Session, questions: List[str]) -> List[Dict[str, Any]]:
     """
-    Ejecuta preguntas contra tu API y construye filas para RAGAS:
-    question / answer / contexts.
-    Recorta contextos y respuesta para evitar max_tokens.
+    Ejecuta preguntas contra tu API y construye filas para RAGAS.
+    - recorta CONTEXTOS para evitar max_tokens
+    - NO recorta ANSWER (salvo que quieras)
     """
     rows: List[Dict[str, Any]] = []
 
     for q in questions:
-        data = ask_chatbot(session, q)
+        try:
+            data = ask_chatbot(session, q)
+        except Exception as e:
+            print(f"[ERROR] Falló la pregunta '{q}': {e}")
+            continue
 
         contexts = data.get("fragmentos_usados") or []
-        # Solo evaluamos “RAG real”: si no hay fragmentos usados, no hay contexto.
         if not contexts:
             print(f"[SKIP] Sin fragmentos usados para: {q}")
             continue
 
+        # recortar contextos
         contexts = contexts[:MAX_CONTEXTS]
         contexts = [trim(c, MAX_CONTEXT_CHARS) for c in contexts]
 
-        answer = trim(data.get("respuesta", ""), MAX_ANSWER_CHARS)
+        # NO recortar answer salvo que MAX_ANSWER_CHARS tenga un número
+        answer_raw = (data.get("respuesta") or "").strip()
+        answer = answer_raw if MAX_ANSWER_CHARS is None else trim(answer_raw, MAX_ANSWER_CHARS)
 
         row = {
             "question": q,
             "answer": answer,
             "contexts": contexts,
-            # extras útiles para auditoría (no los usa RAGAS, pero los guardamos):
             "fuentes": data.get("fuentes", []),
             "distancias": data.get("distancias", []),
         }
@@ -157,9 +171,6 @@ def save_jsonl(rows: List[Dict[str, Any]], path: str) -> None:
 
 
 def save_results_csv(df, path: str) -> None:
-    """
-    Guarda el dataframe de resultados (pandas) a CSV en UTF-8.
-    """
     df.to_csv(path, index=False, encoding="utf-8")
 
 
@@ -167,52 +178,48 @@ def save_results_csv(df, path: str) -> None:
 # MAIN
 # =========================
 def main():
-    # 1) Seguridad: OpenAI API key en local (RAGAS la necesita para evaluar)
+    # OpenAI key en local (RAGAS la usa para evaluar)
     if not os.getenv("OPENAI_API_KEY"):
         raise RuntimeError(
-            "Falta OPENAI_API_KEY en tu entorno local. "
-            "En PowerShell: $env:OPENAI_API_KEY='sk-...'; python eval_ragas.py"
+            "Falta OPENAI_API_KEY en tu entorno local.\n"
+            "En PowerShell:\n"
+            "  $env:OPENAI_API_KEY='sk-...'\n"
+            "  $env:CHATBOT_PASSWORD='...'\n"
+            "  python eval_ragas.py"
         )
 
-    # 2) Login + warmup
     session = login_session()
     warmup(session)
 
-    # 3) Generar dataset (pregunta/answer/contexts)
     rows = build_rows(session, QUESTIONS)
     if not rows:
         raise RuntimeError(
-            "No hay filas evaluables. "
+            "No hay filas evaluables.\n"
             "Revisa QUESTIONS: deben devolver fragmentos_usados (contextos) en tu API."
         )
 
-    # 4) Guardar dataset bruto (para auditoría)
     save_jsonl(rows, OUT_JSONL)
     print(f"[OK] Dataset guardado: {OUT_JSONL} ({len(rows)} filas)")
 
-    # 5) Dataset para RAGAS (solo los campos que usa)
+    # Dataset para RAGAS (solo los campos que usa)
     ragas_rows = [{"question": r["question"], "answer": r["answer"], "contexts": r["contexts"]} for r in rows]
     dataset = Dataset.from_list(ragas_rows)
 
-    # 6) Evaluación
-    results = evaluate(
-        dataset,
-        metrics=[
-            faithfulness,        # fidelidad (si lo dicho está soportado por contexts)
-            answer_relevancy,    # relevancia de la respuesta respecto a la pregunta
-        ],
-    )
+    metrics = [faithfulness]
+    if _answer_rel_metric is not None:
+        metrics.append(_answer_rel_metric)
+    else:
+        print("[WARN] No se pudo importar answer_relevancy/answer_relevance. Se evaluará solo faithfulness.")
 
-    # 7) Mostrar resultados agregados
+    results = evaluate(dataset, metrics=metrics)
+
     print("\n=== MÉTRICAS AGREGADAS ===")
     print(results)
 
-    # 8) Tabla por fila
     df = results.to_pandas()
     print("\n=== RESULTADOS POR FILA ===")
     print(df)
 
-    # 9) Guardar CSV
     save_results_csv(df, OUT_CSV)
     print(f"\n[OK] Resultados guardados: {OUT_CSV}")
 
