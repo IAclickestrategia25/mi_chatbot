@@ -773,49 +773,54 @@
         }
       }
       /* 1) Nada de scroll en la página */
+      /* ===========================
+   SCROLL GLOBAL + CHAT FIJO
+   =========================== */
+
+/* 1. Scroll en toda la página */
       html, body {
-        height: 100%;
-        overflow: hidden;
+        height: auto;
+        overflow-y: auto;
+        overflow-x: hidden;
       }
 
-      /* 2) La página ocupa el alto visible y no crece */
+      /* 2. La página puede crecer (NO 100vh) */
       .page {
-        height: calc(100vh - 36px); /* ajusta si cambias el padding del body */
-        overflow: hidden;
+        height: auto;
+        overflow: visible;
+      }
+
+      /* 3. El layout fluye normal */
+      .layout {
+        align-items: stretch;
+      }
+
+      /* 4. El chat NO crece infinito */
+      #chat {
+        max-height: 72vh;        /* ajusta si quieres */
         display: flex;
         flex-direction: column;
       }
 
-      /* 3) El layout ocupa el espacio restante */
-      .layout {
-        flex: 1;
-        min-height: 0;
-      }
-
-      /* 4) Evita que las columnas empujen altura */
-      .left-column,
-      #chat {
-        min-height: 0;
-      }
-
-      /* 5) El chat es el único que permite scroll (en messages) */
+      /* 5. Scroll interno SOLO en los mensajes */
       #chat .card-inner {
+        display: flex;
+        flex-direction: column;
         height: 100%;
-        min-height: 0;
       }
 
       #messages {
         flex: 1;
-        min-height: 0;
         overflow-y: auto;
+        min-height: 120px;
       }
 
-      /* 6) Quita scroll en elementos de la izquierda */
-      #filesList,
-      #fileDetails {
-        max-height: none;
-        overflow: hidden !important;
+      /* 6. El input del chat siempre visible */
+      #chat form {
+        flex-shrink: 0;
+        background: white;
       }
+
 
     </style>
 
