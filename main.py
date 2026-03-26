@@ -698,35 +698,22 @@ async def index_summary(
     role: str = Depends(require_auth),
     col=Depends(get_chroma_collection),
 ):
-    # ChromaDB limita .get() a 100 registros por defecto.
-    # Paginamos para obtener TODOS los metadatos sin importar cuántos haya.
-    PAGE_SIZE = 500
-    contador: Dict[str, int] = {}
-    offset = 0
-
     try:
-        total = col.count()
+        res = col.get(include=["metadatas"], limit=50000)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error leyendo de Chroma: {e}")
 
-    while offset < total:
-        try:
-            res = col.get(include=["metadatas"], limit=PAGE_SIZE, offset=offset)
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Error leyendo de Chroma: {e}")
-
-        for meta in res.get("metadatas", []):
-            filename = meta.get("filename", "desconocido")
-            contador[filename] = contador.get(filename, 0) + 1
-
-        offset += PAGE_SIZE
+    contador: Dict[str, int] = {}
+    for meta in res.get("metadatas", []):
+        filename = meta.get("filename", "desconocido")
+        contador[filename] = contador.get(filename, 0) + 1
 
     archivos = [
         {"filename": name, "total_fragmentos": count}
         for name, count in sorted(contador.items())
     ]
 
-    return {"archivos": archivos, "total_fragmentos": total}
+    return {"archivos": archivos}
 
 
 # -------------------------------------------------
