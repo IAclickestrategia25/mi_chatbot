@@ -698,15 +698,28 @@ async def index_summary(
     role: str = Depends(require_auth),
     col=Depends(get_chroma_collection),
 ):
-    try:
-        res = col.get(include=["metadatas"], limit=50000)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error leyendo de Chroma: {e}")
-
+    PAGE_SIZE = 300
     contador: Dict[str, int] = {}
-    for meta in res.get("metadatas", []):
-        filename = meta.get("filename", "desconocido")
-        contador[filename] = contador.get(filename, 0) + 1
+    offset = 0
+
+    while True:
+        try:
+            res = col.get(include=["metadatas"], limit=PAGE_SIZE, offset=offset)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Error leyendo de Chroma: {e}")
+
+        metadatas = res.get("metadatas", [])
+        if not metadatas:
+            break
+
+        for meta in metadatas:
+            filename = meta.get("filename", "desconocido")
+            contador[filename] = contador.get(filename, 0) + 1
+
+        if len(metadatas) < PAGE_SIZE:
+            break
+
+        offset += PAGE_SIZE
 
     archivos = [
         {"filename": name, "total_fragmentos": count}
